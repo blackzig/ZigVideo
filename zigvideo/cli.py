@@ -4,6 +4,7 @@ import argparse
 
 from .hardware import detect_hardware
 from .planner import build_plan
+from .runtime import inspect_torch_runtime
 
 
 def cmd_doctor(_: argparse.Namespace) -> int:
@@ -19,6 +20,12 @@ def cmd_plan(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_torch_check(_: argparse.Namespace) -> int:
+    report = inspect_torch_runtime(run_smoke_test=True)
+    print(report.to_json())
+    return 0 if report.cuda_available and report.fp16_smoke_test else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="zigvideo",
@@ -28,6 +35,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     doctor = sub.add_parser("doctor", help="Detect hardware and print capabilities.")
     doctor.set_defaults(func=cmd_doctor)
+
+    torch_check = sub.add_parser(
+        "torch-check",
+        help="Validate the installed PyTorch CUDA runtime with a small FP16 GPU operation.",
+    )
+    torch_check.set_defaults(func=cmd_torch_check)
 
     plan = sub.add_parser("plan", help="Create a low-VRAM generation plan for this PC.")
     plan.add_argument("--task", choices=["t2v", "i2v"], default="i2v")
