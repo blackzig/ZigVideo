@@ -5,7 +5,6 @@ import gc
 import json
 from pathlib import Path
 import time
-from typing import Iterable
 
 
 PIPELINE_REPO = "Lightricks/LTX-Video"
@@ -90,6 +89,7 @@ def generation_preview(preset: str, cache_dir: str | Path, output: str | Path) -
         "pipeline_repo": PIPELINE_REPO,
         "transformer_repo": GGUF_REPO,
         "transformer_file": GGUF_FILENAME,
+        "transformer_loader": "LTXVideoTransformer3DModel.from_single_file",
         "compute_dtype": "float16",
         "quantization": "GGUF Q3_K_S",
         "offload": "sequential CPU offload",
@@ -116,9 +116,30 @@ def _cleanup_cuda(torch) -> None:
         torch.cuda.synchronize()
 
 
+def _load_quantized_transformer(gguf_path: str):
+    import torch
+    from diffusers import GGUFQuantizationConfig, LTXVideoTransformer3DModel
+
+    loader = getattr(LTXVideoTransformer3DModel, "from_single_file", None)
+    if loader is None:
+        raise RuntimeError(
+            "Installed Diffusers does not expose "
+            "LTXVideoTransformer3DModel.from_single_file. "
+            "Run 'zigvideo ai-check' after updating dependencies."
+        )
+
+    return loader(
+        gguf_path,
+        quantization_config=GGUFQuantizationConfig(compute_dtype=torch.float16),
+        config=PIPELINE_REPO,
+        subfolder="transformer",
+        dtype=torch.float16,
+    )
+
+
 def _load_pipeline(cache_dir: Path):
     import torch
-    from diffusers import AutoModel, GGUFQuantizationConfig, LTXPipeline
+    from diffusers import LTXPipeline
     from huggingface_hub import hf_hub_download
 
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -131,14 +152,8 @@ def _load_pipeline(cache_dir: Path):
         cache_dir=str(cache_dir),
     )
 
-    print("[ZigVideo] Loading quantized transformer on CPU (FP16 compute)...")
-    transformer = AutoModel.from_single_file(
-        gguf_path,
-        quantization_config=GGUFQuantizationConfig(compute_dtype=torch.float16),
-        config=PIPELINE_REPO,
-        subfolder="transformer",
-        dtype=torch.float16,
-    )
+    print("[ZigVideo] Loading quantized LTX transformer on CPU (FP16 compute)...")
+    transformer = _load_quantized_transformer(gguf_path)
 
     print("[ZigVideo] Loading LTX pipeline components...")
     pipeline = LTXPipeline.from_pretrained(
@@ -150,8 +165,8 @@ def _load_pipeline(cache_dir: Path):
     )
 
     # A 6 GB Turing card cannot safely hold the full text encoder or all pipeline
-    # components at once. Leaf-level sequential offload minimizes accelerator
-    # memory at the cost of speed.
+    # components at once. Sequential offload minimizes accelerator memory at the
+    # cost of speed.
     print("[ZigVideo] Enabling sequential CPU offload and VAE tiling...")
     pipeline.enable_sequential_cpu_offload(device="cuda")
     if hasattr(pipeline.vae, "enable_tiling"):

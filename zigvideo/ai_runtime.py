@@ -73,11 +73,16 @@ def inspect_ai_runtime() -> AIRuntimeReport:
             )
 
         try:
-            from diffusers import AutoModel, GGUFQuantizationConfig  # noqa: F401
+            from diffusers import GGUFQuantizationConfig, LTXVideoTransformer3DModel  # noqa: F401
+
+            if not hasattr(LTXVideoTransformer3DModel, "from_single_file"):
+                raise AttributeError(
+                    "LTXVideoTransformer3DModel.from_single_file is missing"
+                )
             gguf_loader_available = True
         except Exception as exc:
             errors.append(
-                f"Diffusers GGUF loader unavailable: {type(exc).__name__}: {exc}"
+                f"Diffusers LTX GGUF loader unavailable: {type(exc).__name__}: {exc}"
             )
 
     ready = (
