@@ -1,0 +1,12 @@
+models:
+  ltxv-2b-distilled:
+    enabled: true
+    tasks: [t2v, i2v]
+    preferred_precision: fp16
+  framepack-13b:
+    enabled: true
+    tasks: [i2v, t2v]
+    minimum_compute_capability: 8.0
+  wan21-1.3b:
+    enabled: true
+    tasks: [t2v]
