@@ -9,7 +9,8 @@ import time
 
 PIPELINE_REPO = "Lightricks/LTX-Video"
 GGUF_REPO = "city96/LTX-Video-0.9.6-distilled-gguf"
-GGUF_FILENAME = "ltxv-2b-0.9.6-distilled-04-25-Q3_K_S.gguf"
+GGUF_FILENAME = "ltxv-2b-0.9.6-distilled-04-25-Q5_K_M.gguf"
+QUANTIZATION_LABEL = "GGUF Q5_K_M"
 
 
 @dataclass(frozen=True)
@@ -28,16 +29,19 @@ class GenerationAttempt:
             raise ValueError("LTX frame count must be N*8+1 (9, 17, 25, ...).")
 
 
+# LTX 0.9.x is trained around a 512-resolution bucket. For ~16:9 that bucket
+# is 640x384. The old 320x192 compatibility probe ran but produced unusable
+# smear, so low-VRAM mode now saves memory with temporal length/offload rather
+# than halving the spatial canvas below the model's useful operating range.
 PRESETS: dict[str, GenerationAttempt] = {
-    "ultra-safe": GenerationAttempt(320, 192, 9, 8, 8, 64),
-    "safe": GenerationAttempt(384, 256, 17, 8, 8, 96),
-    "balanced": GenerationAttempt(512, 320, 17, 12, 8, 128),
+    "ultra-safe": GenerationAttempt(640, 384, 9, 8, 8, 64),
+    "safe": GenerationAttempt(640, 384, 17, 8, 8, 96),
+    "balanced": GenerationAttempt(704, 480, 17, 12, 8, 128),
 }
 
 EMERGENCY_ATTEMPTS: tuple[GenerationAttempt, ...] = (
-    GenerationAttempt(256, 160, 9, 8, 8, 64),
-    GenerationAttempt(256, 128, 9, 8, 8, 48),
-    GenerationAttempt(192, 128, 9, 8, 8, 48),
+    GenerationAttempt(576, 352, 9, 8, 8, 64),
+    GenerationAttempt(512, 320, 9, 8, 8, 64),
 )
 
 
@@ -46,13 +50,20 @@ class GenerationReport:
     output: str
     model_repo: str
     model_file: str
+    quantization: str
     preset: str
     seed: int
     successful_attempt: dict
-    elapsed_seconds: float
-    peak_vram_gb: float
-    free_vram_after_gb: float
+    load_seconds: float
+    denoise_seconds: float
+    decode_seconds: float
+    export_seconds: float
+    total_seconds: float
+    peak_torch_allocated_gb: float
+    physical_vram_gb: float
+    free_vram_after_cleanup_gb: float
     retries: int
+    precision_note: str
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -91,15 +102,17 @@ def generation_preview(preset: str, cache_dir: str | Path, output: str | Path) -
         "transformer_file": GGUF_FILENAME,
         "transformer_loader": "LTXVideoTransformer3DModel.from_single_file",
         "compute_dtype": "float16",
-        "quantization": "GGUF Q3_K_S",
-        "offload": "GGUF-aware group offload",
+        "quantization": QUANTIZATION_LABEL,
+        "scheduler": "LTX FlowMatch + stochastic sampling",
+        "offload": "GGUF-aware group offload; staged whole-VAE decode",
         "vae_tiling": True,
         "cache_dir": str(Path(cache_dir)),
         "output": str(Path(output)),
         "attempts": [asdict(a) for a in attempts],
         "note": (
-            "First run downloads several GB of model components. "
-            "Models are cached and are not committed to Git."
+            "The 6 GB legacy profile now starts at the model's 640x384 low-resolution "
+            "bucket. Q5_K_M replaces the earlier Q3_K_S quality probe. The transformer "
+            "still computes in FP16 on pre-BF16 GPUs, which remains experimental."
         ),
     }
 
@@ -139,13 +152,14 @@ def _load_quantized_transformer(gguf_path: str):
 
 def _load_pipeline(cache_dir: Path):
     import torch
-    from diffusers import LTXPipeline
+    from diffusers import FlowMatchEulerDiscreteScheduler, LTXPipeline
+    from diffusers.hooks import apply_group_offloading
     from huggingface_hub import hf_hub_download
 
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"[ZigVideo] Model cache: {cache_dir.resolve()}")
-    print("[ZigVideo] Downloading/checking the 2B distilled GGUF transformer...")
+    print(f"[ZigVideo] Downloading/checking {QUANTIZATION_LABEL} distilled transformer...")
     gguf_path = hf_hub_download(
         repo_id=GGUF_REPO,
         filename=GGUF_FILENAME,
@@ -164,13 +178,18 @@ def _load_pipeline(cache_dir: Path):
         low_cpu_mem_usage=True,
     )
 
-    # Accelerate's sequential CPU offload recreates parameters on the meta
-    # device. That path is unsafe for GGUFParameter because quant_type metadata
-    # can be lost. Group offloading moves the existing quantized parameters
-    # instead, preserving their GGUF metadata.
-    from diffusers.hooks import apply_group_offloading
+    # LTX 0.9.6 distilled's reference config uses stochastic sampling. The
+    # Hugging Face base pipeline scheduler has the correct 0.95/2.05 dynamic
+    # shift and 0.1 terminal shift, but stochastic_sampling defaults to False.
+    pipeline.scheduler = FlowMatchEulerDiscreteScheduler.from_config(
+        pipeline.scheduler.config,
+        stochastic_sampling=True,
+    )
 
-    print("[ZigVideo] Enabling GGUF-aware group offload and VAE tiling...")
+    # Sequential CPU offload is unsafe for GGUFParameter because it recreates
+    # parameters on meta and can lose quant_type metadata. Group offloading
+    # moves the existing quantized parameters and preserves GGUF metadata.
+    print("[ZigVideo] Enabling GGUF-aware group offload...")
     onload_device = torch.device("cuda")
     offload_device = torch.device("cpu")
 
@@ -190,20 +209,95 @@ def _load_pipeline(cache_dir: Path):
         use_stream=False,
     )
 
-    apply_group_offloading(
-        pipeline.vae,
-        onload_device=onload_device,
-        offload_device=offload_device,
-        offload_type="leaf_level",
-        use_stream=False,
-    )
-
+    # Do not leaf-offload the VAE during denoising. It stays on CPU and is
+    # moved as a whole to CUDA only after the transformer is finished. The
+    # previous leaf-level VAE path was extremely slow on PCIe/legacy hardware.
     if hasattr(pipeline.vae, "enable_tiling"):
         pipeline.vae.enable_tiling()
     if hasattr(pipeline.vae, "enable_slicing"):
         pipeline.vae.enable_slicing()
 
     return pipeline
+
+
+def _decode_latents_staged(pipeline, packed_latents, attempt, generator):
+    import torch
+    from diffusers.hooks import apply_group_offloading
+
+    latent_num_frames = (
+        (attempt.num_frames - 1) // pipeline.vae_temporal_compression_ratio + 1
+    )
+    latent_height = attempt.height // pipeline.vae_spatial_compression_ratio
+    latent_width = attempt.width // pipeline.vae_spatial_compression_ratio
+
+    # Unpack and denormalize on CPU so denoising allocations can be released
+    # before the VAE occupies the GPU.
+    latents = pipeline._unpack_latents(
+        packed_latents.to("cpu"),
+        latent_num_frames,
+        latent_height,
+        latent_width,
+        pipeline.transformer_spatial_patch_size,
+        pipeline.transformer_temporal_patch_size,
+    )
+    latents = pipeline._denormalize_latents(
+        latents,
+        pipeline.vae.latents_mean,
+        pipeline.vae.latents_std,
+        pipeline.vae.config.scaling_factor,
+    )
+
+    _cleanup_cuda(torch)
+
+    def prepare_decode_tensors():
+        target_dtype = pipeline.vae.dtype
+        latents_gpu = latents.to(device="cuda", dtype=target_dtype)
+        noise_cpu = torch.randn(
+            latents.shape,
+            generator=generator,
+            device="cpu",
+            dtype=torch.float32,
+        )
+        noise = noise_cpu.to(device="cuda", dtype=target_dtype)
+        latents_gpu = (1.0 - 0.025) * latents_gpu + 0.025 * noise
+        timestep = torch.tensor([0.05], device="cuda", dtype=target_dtype)
+        return latents_gpu, timestep
+
+    try:
+        print("[ZigVideo] Moving the tiled VAE to CUDA for staged decode...")
+        pipeline.vae.to("cuda")
+        latents_gpu, timestep = prepare_decode_tensors()
+        video = pipeline.vae.decode(latents_gpu, timestep, return_dict=False)[0]
+    except torch.OutOfMemoryError:
+        print(
+            "[ZigVideo] Whole-VAE decode did not fit. Falling back to leaf-level "
+            "VAE group offload..."
+        )
+        try:
+            pipeline.vae.to("cpu")
+        except Exception:
+            pass
+        _cleanup_cuda(torch)
+
+        apply_group_offloading(
+            pipeline.vae,
+            onload_device=torch.device("cuda"),
+            offload_device=torch.device("cpu"),
+            offload_type="leaf_level",
+            use_stream=False,
+        )
+        latents_gpu, timestep = prepare_decode_tensors()
+        video = pipeline.vae.decode(latents_gpu, timestep, return_dict=False)[0]
+
+    frames = pipeline.video_processor.postprocess_video(video, output_type="pil")
+
+    try:
+        pipeline.vae.to("cpu")
+    except Exception:
+        pass
+    del video
+    _cleanup_cuda(torch)
+    return frames
 
 
 def generate_text_to_video(
@@ -231,10 +325,12 @@ def generate_text_to_video(
     output.parent.mkdir(parents=True, exist_ok=True)
     cache_dir = Path(cache_dir)
 
+    total_started = time.perf_counter()
+    load_started = time.perf_counter()
     attempts = build_attempt_ladder(preset)
     pipeline = _load_pipeline(cache_dir)
+    load_seconds = time.perf_counter() - load_started
 
-    started = time.perf_counter()
     last_oom: BaseException | None = None
 
     for index, attempt in enumerate(attempts):
@@ -242,7 +338,7 @@ def generate_text_to_video(
             "[ZigVideo] Attempt "
             f"{index + 1}/{len(attempts)}: "
             f"{attempt.width}x{attempt.height}, {attempt.num_frames} frames, "
-            f"{attempt.num_inference_steps} steps"
+            f"{attempt.num_inference_steps} steps @ {attempt.fps} fps"
         )
 
         _cleanup_cuda(torch)
@@ -250,40 +346,72 @@ def generate_text_to_video(
 
         try:
             generator = torch.Generator(device="cpu").manual_seed(seed)
+
+            denoise_started = time.perf_counter()
             result = pipeline(
                 prompt=prompt,
                 negative_prompt=None,
                 width=attempt.width,
                 height=attempt.height,
                 num_frames=attempt.num_frames,
+                frame_rate=attempt.fps,
                 num_inference_steps=attempt.num_inference_steps,
                 guidance_scale=1.0,
-                decode_timestep=0.05,
-                decode_noise_scale=0.025,
                 max_sequence_length=attempt.max_sequence_length,
                 generator=generator,
-                output_type="pil",
+                output_type="latent",
             )
+            denoise_seconds = time.perf_counter() - denoise_started
 
-            frames = result.frames[0]
+            packed_latents = result.frames.detach().to("cpu")
+            del result
+            _cleanup_cuda(torch)
+
+            decode_started = time.perf_counter()
+            frames = _decode_latents_staged(
+                pipeline,
+                packed_latents,
+                attempt,
+                generator,
+            )
+            decode_seconds = time.perf_counter() - decode_started
+
+            export_started = time.perf_counter()
             export_to_video(frames, str(output), fps=attempt.fps)
+            export_seconds = time.perf_counter() - export_started
 
-            peak_vram = torch.cuda.max_memory_allocated() / (1024**3)
-            free_bytes, _ = torch.cuda.mem_get_info()
+            _cleanup_cuda(torch)
+            peak_torch = torch.cuda.max_memory_allocated() / (1024**3)
+            free_bytes, total_bytes = torch.cuda.mem_get_info()
             free_vram = free_bytes / (1024**3)
-            elapsed = time.perf_counter() - started
+            physical_vram = total_bytes / (1024**3)
+            total_seconds = time.perf_counter() - total_started
+
+            precision_note = (
+                "GTX/Turing lacks native BF16; LTX's transformer is running in FP16. "
+                "This is a legacy compatibility path and remains quality-experimental."
+                if major < 8
+                else "BF16-capable hardware detected, but this experimental GGUF path currently uses FP16 compute."
+            )
 
             report = GenerationReport(
                 output=str(output.resolve()),
                 model_repo=GGUF_REPO,
                 model_file=GGUF_FILENAME,
+                quantization=QUANTIZATION_LABEL,
                 preset=preset,
                 seed=seed,
                 successful_attempt=asdict(attempt),
-                elapsed_seconds=round(elapsed, 2),
-                peak_vram_gb=round(peak_vram, 2),
-                free_vram_after_gb=round(free_vram, 2),
+                load_seconds=round(load_seconds, 2),
+                denoise_seconds=round(denoise_seconds, 2),
+                decode_seconds=round(decode_seconds, 2),
+                export_seconds=round(export_seconds, 2),
+                total_seconds=round(total_seconds, 2),
+                peak_torch_allocated_gb=round(peak_torch, 2),
+                physical_vram_gb=round(physical_vram, 2),
+                free_vram_after_cleanup_gb=round(free_vram, 2),
                 retries=index,
+                precision_note=precision_note,
             )
 
             report_path = output.with_suffix(output.suffix + ".json")
@@ -302,7 +430,10 @@ def generate_text_to_video(
                 raise
             last_oom = exc
 
-        print("[ZigVideo] CUDA OOM detected. Releasing VRAM and retrying smaller settings...")
+        print(
+            "[ZigVideo] CUDA OOM detected. Releasing VRAM and retrying the "
+            "next quality-preserving fallback..."
+        )
         _cleanup_cuda(torch)
 
     raise RuntimeError(

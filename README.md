@@ -32,7 +32,7 @@ like one adaptive engine:
 |---|---|---|
 | CPU fallback | no usable CUDA GPU | sparse AI keyframes + interpolation |
 | Ultra Lite | <4 GB VRAM | hybrid pipeline, tiny resolution, disk-first cache |
-| Legacy 6 GB | GTX/Turing 4–6.5 GB | LTX 2B distilled FP16 + sequential offload + VAE tiling |
+| Legacy 6 GB | GTX/Turing 4–6.5 GB | LTX 2B distilled GGUF quality experiment + staged/group offload; alternate FP16-native backend under evaluation |
 | Low VRAM | RTX-class 6–8 GB | FramePack when compatible; otherwise quantized/offloaded Diffusers |
 | Balanced | 8–12 GB | Wan/LTX with group offload |
 | Quality | 12+ GB | larger windows/resolution and less aggressive offload |

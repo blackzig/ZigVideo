@@ -1,25 +1,27 @@
 from zigvideo.backends.ltx_gguf import (
     EMERGENCY_ATTEMPTS,
     PRESETS,
+    QUANTIZATION_LABEL,
     build_attempt_ladder,
     generation_preview,
 )
 
 
-def test_ultra_safe_ltx_dimensions_are_valid():
+def test_ultra_safe_uses_ltx_512_bucket():
     attempt = PRESETS["ultra-safe"]
     attempt.validate()
-    assert attempt.width == 320
-    assert attempt.height == 192
+    assert attempt.width == 640
+    assert attempt.height == 384
     assert attempt.num_frames == 9
+    assert attempt.fps == 8
     assert attempt.num_inference_steps == 8
 
 
-def test_fallback_ladder_gets_smaller():
+def test_fallback_ladder_preserves_minimum_useful_resolution():
     attempts = build_attempt_ladder("ultra-safe")
     assert attempts[0] == PRESETS["ultra-safe"]
-    assert attempts[-1].width <= attempts[0].width
-    assert attempts[-1].height <= attempts[0].height
+    assert attempts[-1].width >= 512
+    assert attempts[-1].height >= 320
     assert all((a.num_frames - 1) % 8 == 0 for a in attempts)
 
 
@@ -31,13 +33,16 @@ def test_generation_preview_does_not_load_models(tmp_path):
     )
     assert preview["backend"] == "ltx-gguf"
     assert preview["compute_dtype"] == "float16"
-    assert preview["quantization"] == "GGUF Q3_K_S"
-    assert preview["offload"] == "GGUF-aware group offload"
+    assert preview["quantization"] == QUANTIZATION_LABEL
+    assert preview["quantization"] == "GGUF Q5_K_M"
+    assert preview["scheduler"] == "LTX FlowMatch + stochastic sampling"
+    assert "staged whole-VAE decode" in preview["offload"]
     assert (
         preview["transformer_loader"]
         == "LTXVideoTransformer3DModel.from_single_file"
     )
-    assert preview["attempts"][0]["num_frames"] == 9
+    assert preview["attempts"][0]["width"] == 640
+    assert preview["attempts"][0]["height"] == 384
 
 
 def test_installed_diffusers_exposes_ltx_single_file_loader():
