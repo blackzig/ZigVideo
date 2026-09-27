@@ -22,6 +22,8 @@ ai = [
   "safetensors>=0.5",
   "gguf>=0.10",
   "sentencepiece>=0.2",
+  "protobuf>=4.25",
+  "tiktoken>=0.7",
   "imageio[ffmpeg]>=2.37"
 ]
 
