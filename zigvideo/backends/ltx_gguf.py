@@ -92,7 +92,7 @@ def generation_preview(preset: str, cache_dir: str | Path, output: str | Path) -
         "transformer_loader": "LTXVideoTransformer3DModel.from_single_file",
         "compute_dtype": "float16",
         "quantization": "GGUF Q3_K_S",
-        "offload": "sequential CPU offload",
+        "offload": "GGUF-aware group offload",
         "vae_tiling": True,
         "cache_dir": str(Path(cache_dir)),
         "output": str(Path(output)),
@@ -164,11 +164,40 @@ def _load_pipeline(cache_dir: Path):
         low_cpu_mem_usage=True,
     )
 
-    # A 6 GB Turing card cannot safely hold the full text encoder or all pipeline
-    # components at once. Sequential offload minimizes accelerator memory at the
-    # cost of speed.
-    print("[ZigVideo] Enabling sequential CPU offload and VAE tiling...")
-    pipeline.enable_sequential_cpu_offload(device="cuda")
+    # Accelerate's sequential CPU offload recreates parameters on the meta
+    # device. That path is unsafe for GGUFParameter because quant_type metadata
+    # can be lost. Group offloading moves the existing quantized parameters
+    # instead, preserving their GGUF metadata.
+    from diffusers.hooks import apply_group_offloading
+
+    print("[ZigVideo] Enabling GGUF-aware group offload and VAE tiling...")
+    onload_device = torch.device("cuda")
+    offload_device = torch.device("cpu")
+
+    pipeline.transformer.enable_group_offload(
+        onload_device=onload_device,
+        offload_device=offload_device,
+        offload_type="leaf_level",
+        use_stream=False,
+    )
+
+    apply_group_offloading(
+        pipeline.text_encoder,
+        onload_device=onload_device,
+        offload_device=offload_device,
+        offload_type="block_level",
+        num_blocks_per_group=1,
+        use_stream=False,
+    )
+
+    apply_group_offloading(
+        pipeline.vae,
+        onload_device=onload_device,
+        offload_device=offload_device,
+        offload_type="leaf_level",
+        use_stream=False,
+    )
+
     if hasattr(pipeline.vae, "enable_tiling"):
         pipeline.vae.enable_tiling()
     if hasattr(pipeline.vae, "enable_slicing"):
