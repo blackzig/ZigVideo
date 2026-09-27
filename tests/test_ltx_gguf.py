@@ -32,6 +32,7 @@ def test_generation_preview_does_not_load_models(tmp_path):
     assert preview["backend"] == "ltx-gguf"
     assert preview["compute_dtype"] == "float16"
     assert preview["quantization"] == "GGUF Q3_K_S"
+    assert preview["offload"] == "GGUF-aware group offload"
     assert (
         preview["transformer_loader"]
         == "LTXVideoTransformer3DModel.from_single_file"
@@ -43,3 +44,11 @@ def test_installed_diffusers_exposes_ltx_single_file_loader():
     from diffusers import LTXVideoTransformer3DModel
 
     assert hasattr(LTXVideoTransformer3DModel, "from_single_file")
+
+
+def test_installed_diffusers_exposes_group_offload():
+    from diffusers import LTXVideoTransformer3DModel
+    from diffusers.hooks import apply_group_offloading
+
+    assert callable(apply_group_offloading)
+    assert hasattr(LTXVideoTransformer3DModel, "enable_group_offload")
