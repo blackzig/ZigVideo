@@ -149,3 +149,27 @@ checked before redistribution.
 - Hugging Face Diffusers — quantization, group offloading and video pipeline ecosystem
 - LTX-Video — small/distilled video models and multiscale workflows
 - Wan — consumer-oriented video models and workflows
+
+
+## Experimental first-video command
+
+After `zigvideo ai-check` and `zigvideo torch-check` both pass, inspect the
+first low-VRAM generation plan without downloading models:
+
+```powershell
+.\.venv\Scripts\zigvideo.exe generate --prompt "A small robot walks through a rainy futuristic city at night, cinematic camera movement" --preset ultra-safe --dry-run
+```
+
+Then run the first real generation:
+
+```powershell
+.\.venv\Scripts\zigvideo.exe generate --prompt "A small robot walks through a rainy futuristic city at night, cinematic camera movement" --preset ultra-safe --output outputs/first-zigvideo.mp4
+```
+
+The experimental backend uses an LTX-Video 2B distilled GGUF transformer with
+FP16 compute, sequential CPU offload and VAE tiling. On CUDA OOM it automatically
+retries progressively smaller resolutions. The first run downloads several GB of
+third-party model components into `models/huggingface`.
+
+The `ultra-safe` profile deliberately starts at 320x192, 9 frames and 8
+inference steps. It is a compatibility experiment, not a quality preset.

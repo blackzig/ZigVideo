@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 
 from .ai_runtime import inspect_ai_runtime
 from .hardware import detect_hardware
@@ -33,10 +34,37 @@ def cmd_ai_check(_: argparse.Namespace) -> int:
     return 0 if report.ready else 1
 
 
+def cmd_generate(args: argparse.Namespace) -> int:
+    from .backends.ltx_gguf import (
+        generate_text_to_video,
+        generation_preview,
+    )
+
+    if args.dry_run:
+        print(
+            json.dumps(
+                generation_preview(args.preset, args.cache_dir, args.output),
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        return 0
+
+    report = generate_text_to_video(
+        prompt=args.prompt,
+        output=args.output,
+        preset=args.preset,
+        seed=args.seed,
+        cache_dir=args.cache_dir,
+    )
+    print(json.dumps(report.to_dict(), indent=2, ensure_ascii=False))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="zigvideo",
-        description="Hardware-aware local AI video generation planner for low-resource PCs.",
+        description="Hardware-aware local AI video generation for low-resource PCs.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -60,6 +88,35 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument("--seconds", type=float, default=5.0)
     plan.add_argument("--fps", type=int, default=16)
     plan.set_defaults(func=cmd_plan)
+
+    generate = sub.add_parser(
+        "generate",
+        help="Experimental low-VRAM text-to-video generation with LTX 2B GGUF.",
+    )
+    generate.add_argument("--prompt", required=True, help="English generation prompt.")
+    generate.add_argument(
+        "--output",
+        default="outputs/first-zigvideo.mp4",
+        help="Destination MP4 path.",
+    )
+    generate.add_argument(
+        "--preset",
+        choices=["ultra-safe", "safe", "balanced"],
+        default="ultra-safe",
+        help="Start conservatively on low-VRAM hardware.",
+    )
+    generate.add_argument("--seed", type=int, default=42)
+    generate.add_argument(
+        "--cache-dir",
+        default="models/huggingface",
+        help="Local Hugging Face cache directory.",
+    )
+    generate.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the generation/download plan without loading or downloading models.",
+    )
+    generate.set_defaults(func=cmd_generate)
 
     return parser
 
