@@ -31,6 +31,8 @@ class HardwareProfile:
     python_version: str = platform.python_version()
     python_bits: int = struct.calcsize("P") * 8
     nvidia_smi_path: Optional[str] = None
+    ai_runtime_ready: bool = True
+    environment_warnings: tuple[str, ...] = ()
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -43,6 +45,26 @@ def _ram_gb() -> float:
     if psutil is not None:
         return round(psutil.virtual_memory().total / (1024 ** 3), 2)
     return 0.0
+
+
+def _environment_status() -> tuple[bool, tuple[str, ...]]:
+    warnings: list[str] = []
+    python_bits = struct.calcsize("P") * 8
+
+    if python_bits != 64:
+        warnings.append(
+            "Python is 32-bit. ZigVideo AI backends require a 64-bit Python runtime."
+        )
+
+    if platform.system() == "Windows":
+        major, minor = sys.version_info[:2]
+        if (major, minor) < (3, 9) or (major, minor) > (3, 12):
+            warnings.append(
+                "Current PyTorch Windows binaries support Python 3.9-3.12; "
+                "ZigVideo recommends Python 3.12 x64 for inference."
+            )
+
+    return len(warnings) == 0, tuple(warnings)
 
 
 def _candidate_nvidia_smi_paths() -> list[str]:
@@ -126,6 +148,7 @@ def _query_nvidia_smi() -> tuple[str, float, Optional[float], str] | None:
 def detect_hardware() -> HardwareProfile:
     python_version = platform.python_version()
     python_bits = struct.calcsize("P") * 8
+    ai_runtime_ready, environment_warnings = _environment_status()
 
     nvidia = _query_nvidia_smi()
     if nvidia:
@@ -144,6 +167,8 @@ def detect_hardware() -> HardwareProfile:
             python_version=python_version,
             python_bits=python_bits,
             nvidia_smi_path=smi_path,
+            ai_runtime_ready=ai_runtime_ready,
+            environment_warnings=environment_warnings,
         )
 
     return HardwareProfile(
@@ -159,4 +184,6 @@ def detect_hardware() -> HardwareProfile:
         python_version=python_version,
         python_bits=python_bits,
         nvidia_smi_path=None,
+        ai_runtime_ready=ai_runtime_ready,
+        environment_warnings=environment_warnings,
     )
