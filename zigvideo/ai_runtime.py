@@ -15,6 +15,9 @@ class AIRuntimeReport:
     accelerate_version: Optional[str]
     huggingface_hub_version: Optional[str]
     gguf_version: Optional[str]
+    sentencepiece_version: Optional[str]
+    protobuf_version: Optional[str]
+    tiktoken_version: Optional[str]
     ltx_pipeline_available: bool
     ltx_i2v_pipeline_available: bool
     gguf_loader_available: bool
@@ -40,6 +43,9 @@ def inspect_ai_runtime() -> AIRuntimeReport:
     accelerate_version = _version("accelerate")
     huggingface_hub_version = _version("huggingface-hub")
     gguf_version = _version("gguf")
+    sentencepiece_version = _version("sentencepiece")
+    protobuf_version = _version("protobuf")
+    tiktoken_version = _version("tiktoken")
 
     required = {
         "torch": torch_version,
@@ -48,6 +54,9 @@ def inspect_ai_runtime() -> AIRuntimeReport:
         "accelerate": accelerate_version,
         "huggingface-hub": huggingface_hub_version,
         "gguf": gguf_version,
+        "sentencepiece": sentencepiece_version,
+        "protobuf": protobuf_version,
+        "tiktoken": tiktoken_version,
     }
     for package, version in required.items():
         if version is None:
@@ -100,6 +109,9 @@ def inspect_ai_runtime() -> AIRuntimeReport:
         accelerate_version=accelerate_version,
         huggingface_hub_version=huggingface_hub_version,
         gguf_version=gguf_version,
+        sentencepiece_version=sentencepiece_version,
+        protobuf_version=protobuf_version,
+        tiktoken_version=tiktoken_version,
         ltx_pipeline_available=ltx_pipeline_available,
         ltx_i2v_pipeline_available=ltx_i2v_pipeline_available,
         gguf_loader_available=gguf_loader_available,
