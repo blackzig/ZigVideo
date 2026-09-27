@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 
+from .ai_runtime import inspect_ai_runtime
 from .hardware import detect_hardware
 from .planner import build_plan
 from .runtime import inspect_torch_runtime
@@ -26,6 +27,12 @@ def cmd_torch_check(_: argparse.Namespace) -> int:
     return 0 if report.cuda_available and report.fp16_smoke_test else 1
 
 
+def cmd_ai_check(_: argparse.Namespace) -> int:
+    report = inspect_ai_runtime()
+    print(report.to_json())
+    return 0 if report.ready else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="zigvideo",
@@ -41,6 +48,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Validate the installed PyTorch CUDA runtime with a small FP16 GPU operation.",
     )
     torch_check.set_defaults(func=cmd_torch_check)
+
+    ai_check = sub.add_parser(
+        "ai-check",
+        help="Validate Diffusers/LTX/GGUF dependencies before downloading video models.",
+    )
+    ai_check.set_defaults(func=cmd_ai_check)
 
     plan = sub.add_parser("plan", help="Create a low-VRAM generation plan for this PC.")
     plan.add_argument("--task", choices=["t2v", "i2v"], default="i2v")
