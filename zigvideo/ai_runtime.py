@@ -21,6 +21,7 @@ class AIRuntimeReport:
     ltx_pipeline_available: bool
     ltx_i2v_pipeline_available: bool
     gguf_loader_available: bool
+    group_offload_available: bool
     errors: tuple[str, ...]
 
     def to_json(self) -> str:
@@ -65,6 +66,7 @@ def inspect_ai_runtime() -> AIRuntimeReport:
     ltx_pipeline_available = False
     ltx_i2v_pipeline_available = False
     gguf_loader_available = False
+    group_offload_available = False
 
     if diffusers_version is not None:
         try:
@@ -94,11 +96,26 @@ def inspect_ai_runtime() -> AIRuntimeReport:
                 f"Diffusers LTX GGUF loader unavailable: {type(exc).__name__}: {exc}"
             )
 
+        try:
+            from diffusers.hooks import apply_group_offloading  # noqa: F401
+            from diffusers import LTXVideoTransformer3DModel
+
+            if not hasattr(LTXVideoTransformer3DModel, "enable_group_offload"):
+                raise AttributeError(
+                    "LTXVideoTransformer3DModel.enable_group_offload is missing"
+                )
+            group_offload_available = True
+        except Exception as exc:
+            errors.append(
+                f"Diffusers group offload unavailable: {type(exc).__name__}: {exc}"
+            )
+
     ready = (
         not errors
         and ltx_pipeline_available
         and ltx_i2v_pipeline_available
         and gguf_loader_available
+        and group_offload_available
     )
 
     return AIRuntimeReport(
@@ -115,5 +132,6 @@ def inspect_ai_runtime() -> AIRuntimeReport:
         ltx_pipeline_available=ltx_pipeline_available,
         ltx_i2v_pipeline_available=ltx_i2v_pipeline_available,
         gguf_loader_available=gguf_loader_available,
+        group_offload_available=group_offload_available,
         errors=tuple(errors),
     )
