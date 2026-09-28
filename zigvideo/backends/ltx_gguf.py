@@ -304,7 +304,12 @@ def _decode_latents_staged(pipeline, packed_latents, attempt, generator):
         print("[ZigVideo] Moving the tiled VAE to CUDA for staged decode...")
         pipeline.vae.to("cuda")
         latents_gpu, timestep = prepare_decode_tensors()
-        video = pipeline.vae.decode(latents_gpu, timestep, return_dict=False)[0]
+        with torch.inference_mode():
+            video = pipeline.vae.decode(
+                latents_gpu,
+                timestep,
+                return_dict=False,
+            )[0]
     except torch.OutOfMemoryError:
         print(
             "[ZigVideo] Whole-VAE decode did not fit. Falling back to leaf-level "
@@ -324,9 +329,18 @@ def _decode_latents_staged(pipeline, packed_latents, attempt, generator):
             use_stream=False,
         )
         latents_gpu, timestep = prepare_decode_tensors()
-        video = pipeline.vae.decode(latents_gpu, timestep, return_dict=False)[0]
+        with torch.inference_mode():
+            video = pipeline.vae.decode(
+                latents_gpu,
+                timestep,
+                return_dict=False,
+            )[0]
 
-    frames = pipeline.video_processor.postprocess_video(video, output_type="pil")
+    video = video.detach()
+    frames = pipeline.video_processor.postprocess_video(
+        video,
+        output_type="pil",
+    )
 
     try:
         pipeline.vae.to("cpu")
