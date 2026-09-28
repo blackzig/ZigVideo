@@ -43,7 +43,12 @@ def cmd_generate(args: argparse.Namespace) -> int:
     if args.dry_run:
         print(
             json.dumps(
-                generation_preview(args.preset, args.cache_dir, args.output),
+                generation_preview(
+                    args.preset,
+                    args.cache_dir,
+                    args.output,
+                    aspect=args.aspect,
+                ),
                 indent=2,
                 ensure_ascii=False,
             )
@@ -54,6 +59,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
         prompt=args.prompt,
         output=args.output,
         preset=args.preset,
+        aspect=args.aspect,
         seed=args.seed,
         cache_dir=args.cache_dir,
     )
@@ -104,6 +110,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["ultra-safe", "safe", "balanced"],
         default="ultra-safe",
         help="Start conservatively on low-VRAM hardware.",
+    )
+    generate.add_argument(
+        "--aspect",
+        choices=["16:9", "9:16"],
+        default="16:9",
+        help="Output composition. Use 9:16 for Shorts, Reels and TikTok.",
     )
     generate.add_argument("--seed", type=int, default=42)
     generate.add_argument(

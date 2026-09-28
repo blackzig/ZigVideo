@@ -2,6 +2,7 @@ from zigvideo.backends.ltx_gguf import (
     EMERGENCY_ATTEMPTS,
     PRESETS,
     QUANTIZATION_LABEL,
+    SUPPORTED_ASPECTS,
     build_attempt_ladder,
     generation_preview,
 )
@@ -57,3 +58,25 @@ def test_installed_diffusers_exposes_group_offload():
 
     assert callable(apply_group_offloading)
     assert hasattr(LTXVideoTransformer3DModel, "enable_group_offload")
+
+
+def test_vertical_shorts_uses_native_9_16_bucket():
+    attempts = build_attempt_ladder("ultra-safe", "9:16")
+    first = attempts[0]
+    assert first.width == 384
+    assert first.height == 640
+    assert first.width < first.height
+    assert "9:16" in SUPPORTED_ASPECTS
+
+
+def test_vertical_preview_recommends_short_delivery_resolution(tmp_path):
+    preview = generation_preview(
+        preset="ultra-safe",
+        cache_dir=tmp_path / "models",
+        output=tmp_path / "short.mp4",
+        aspect="9:16",
+    )
+    assert preview["aspect"] == "9:16"
+    assert preview["attempts"][0]["width"] == 384
+    assert preview["attempts"][0]["height"] == 640
+    assert "720x1280" in preview["recommended_delivery"]

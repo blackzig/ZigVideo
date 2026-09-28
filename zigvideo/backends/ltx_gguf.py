@@ -11,6 +11,7 @@ PIPELINE_REPO = "Lightricks/LTX-Video"
 GGUF_REPO = "city96/LTX-Video-0.9.6-distilled-gguf"
 GGUF_FILENAME = "ltxv-2b-0.9.6-distilled-04-25-Q5_K_M.gguf"
 QUANTIZATION_LABEL = "GGUF Q5_K_M"
+SUPPORTED_ASPECTS = ("16:9", "9:16")
 
 
 @dataclass(frozen=True)
@@ -52,6 +53,7 @@ class GenerationReport:
     model_file: str
     quantization: str
     preset: str
+    aspect: str
     seed: int
     successful_attempt: dict
     load_seconds: float
@@ -69,11 +71,34 @@ class GenerationReport:
         return asdict(self)
 
 
-def build_attempt_ladder(preset: str) -> list[GenerationAttempt]:
+def _orient_attempt(attempt: GenerationAttempt, aspect: str) -> GenerationAttempt:
+    if aspect not in SUPPORTED_ASPECTS:
+        raise ValueError(f"Unsupported aspect ratio: {aspect}")
+    if aspect == "16:9":
+        return attempt
+    return GenerationAttempt(
+        width=attempt.height,
+        height=attempt.width,
+        num_frames=attempt.num_frames,
+        fps=attempt.fps,
+        num_inference_steps=attempt.num_inference_steps,
+        max_sequence_length=attempt.max_sequence_length,
+    )
+
+
+def build_attempt_ladder(
+    preset: str,
+    aspect: str = "16:9",
+) -> list[GenerationAttempt]:
     if preset not in PRESETS:
         raise ValueError(f"Unknown preset: {preset}")
+    if aspect not in SUPPORTED_ASPECTS:
+        raise ValueError(f"Unsupported aspect ratio: {aspect}")
 
-    ordered: list[GenerationAttempt] = [PRESETS[preset], *EMERGENCY_ATTEMPTS]
+    ordered: list[GenerationAttempt] = [
+        _orient_attempt(attempt, aspect)
+        for attempt in [PRESETS[preset], *EMERGENCY_ATTEMPTS]
+    ]
     unique: list[GenerationAttempt] = []
     seen: set[tuple[int, int, int, int, int, int]] = set()
 
@@ -93,10 +118,21 @@ def build_attempt_ladder(preset: str) -> list[GenerationAttempt]:
     return unique
 
 
-def generation_preview(preset: str, cache_dir: str | Path, output: str | Path) -> dict:
-    attempts = build_attempt_ladder(preset)
+def generation_preview(
+    preset: str,
+    cache_dir: str | Path,
+    output: str | Path,
+    aspect: str = "16:9",
+) -> dict:
+    attempts = build_attempt_ladder(preset, aspect)
     return {
         "backend": "ltx-gguf",
+        "aspect": aspect,
+        "recommended_delivery": (
+            "720x1280 or 1080x1920 after upscale"
+            if aspect == "9:16"
+            else "1280x720 or 1920x1080 after upscale"
+        ),
         "pipeline_repo": PIPELINE_REPO,
         "transformer_repo": GGUF_REPO,
         "transformer_file": GGUF_FILENAME,
@@ -110,8 +146,9 @@ def generation_preview(preset: str, cache_dir: str | Path, output: str | Path) -
         "output": str(Path(output)),
         "attempts": [asdict(a) for a in attempts],
         "note": (
-            "The 6 GB legacy profile now starts at the model's 640x384 low-resolution "
-            "bucket. Q5_K_M replaces the earlier Q3_K_S quality probe. The transformer "
+            "The 6 GB legacy profile starts at the model's 640x384 low-resolution "
+            "bucket for 16:9 or the native vertical 384x640 bucket for 9:16. "
+            "Q5_K_M replaces the earlier Q3_K_S quality probe. The transformer "
             "still computes in FP16 on pre-BF16 GPUs, which remains experimental."
         ),
     }
@@ -304,6 +341,7 @@ def generate_text_to_video(
     prompt: str,
     output: str | Path,
     preset: str = "ultra-safe",
+    aspect: str = "16:9",
     seed: int = 42,
     cache_dir: str | Path = "models/huggingface",
 ) -> GenerationReport:
@@ -327,7 +365,7 @@ def generate_text_to_video(
 
     total_started = time.perf_counter()
     load_started = time.perf_counter()
-    attempts = build_attempt_ladder(preset)
+    attempts = build_attempt_ladder(preset, aspect)
     pipeline = _load_pipeline(cache_dir)
     load_seconds = time.perf_counter() - load_started
 
@@ -400,6 +438,7 @@ def generate_text_to_video(
                 model_file=GGUF_FILENAME,
                 quantization=QUANTIZATION_LABEL,
                 preset=preset,
+                aspect=aspect,
                 seed=seed,
                 successful_attempt=asdict(attempt),
                 load_seconds=round(load_seconds, 2),
