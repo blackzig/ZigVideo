@@ -80,3 +80,15 @@ def test_vertical_preview_recommends_short_delivery_resolution(tmp_path):
     assert preview["attempts"][0]["width"] == 384
     assert preview["attempts"][0]["height"] == 640
     assert "720x1280" in preview["recommended_delivery"]
+
+
+def test_torch_inference_mode_detaches_decode_outputs():
+    import torch
+
+    layer = torch.nn.Conv2d(3, 3, kernel_size=1)
+    input_tensor = torch.randn(1, 3, 8, 8, requires_grad=True)
+
+    with torch.inference_mode():
+        output = layer(input_tensor)
+
+    assert output.requires_grad is False
