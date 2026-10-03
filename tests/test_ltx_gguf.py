@@ -36,6 +36,7 @@ def test_generation_preview_does_not_load_models(tmp_path):
     assert preview["compute_dtype"] == "float16"
     assert preview["quantization"] == QUANTIZATION_LABEL
     assert preview["quantization"] == "GGUF Q5_K_M"
+    assert preview["vae_dtype"] == "float32"
     assert preview["scheduler"] == "LTX FlowMatch + stochastic sampling"
     assert "staged whole-VAE decode" in preview["offload"]
     assert (
@@ -105,3 +106,11 @@ def test_diffusers_pil_video_output_is_batched():
     frames = batch_frames[0]
     assert len(frames) == 2
     assert all(isinstance(frame, Image.Image) for frame in frames)
+
+
+def test_ltx_vae_supports_fp32_loading():
+    import torch
+    from diffusers import AutoencoderKLLTXVideo
+
+    assert torch.float32 is not None
+    assert hasattr(AutoencoderKLLTXVideo, "from_pretrained")
