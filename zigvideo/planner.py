@@ -115,6 +115,8 @@ def build_plan(
             notes=[
                 "CogVideoX-2B is the validated T2V path for Turing/GTX-class 6GB hardware because its weights are native FP16.",
                 "LTX remains experimental for I2V on pre-BF16 GPUs.",
+                "8 FPS is the model generation cadence, not the final delivery target.",
+                "For Shorts, interpolate to 24/30 FPS and deliver at 720x1280 or 1080x1920 after generation.",
                 "Generate in the model's native geometry, then reframe/upscale for vertical delivery.",
             ],
         )

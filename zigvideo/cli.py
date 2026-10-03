@@ -92,6 +92,21 @@ def cmd_generate(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_deliver(args: argparse.Namespace) -> int:
+    from .delivery import deliver_video
+
+    report = deliver_video(
+        input_path=args.input,
+        output_path=args.output,
+        target_fps=args.fps,
+        target_width=args.width,
+        target_height=args.height,
+        interpolation=args.interpolation,
+    )
+    print(json.dumps(report.to_dict(), indent=2, ensure_ascii=False))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="zigvideo",
@@ -166,6 +181,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print the generation/download plan without loading or downloading models.",
     )
     generate.set_defaults(func=cmd_generate)
+
+    deliver = sub.add_parser(
+        "deliver",
+        help="Convert a generated clip into a social-video delivery format.",
+    )
+    deliver.add_argument("--input", required=True, help="Source MP4 path.")
+    deliver.add_argument("--output", required=True, help="Destination MP4 path.")
+    deliver.add_argument("--fps", type=int, default=24)
+    deliver.add_argument("--width", type=int, default=720)
+    deliver.add_argument("--height", type=int, default=1280)
+    deliver.add_argument(
+        "--interpolation",
+        choices=["motion", "duplicate"],
+        default="motion",
+        help="Motion interpolation creates intermediate frames; duplicate is faster.",
+    )
+    deliver.set_defaults(func=cmd_deliver)
 
     return parser
 
