@@ -22,6 +22,7 @@ class AIRuntimeReport:
     ltx_i2v_pipeline_available: bool
     gguf_loader_available: bool
     group_offload_available: bool
+    cogvideox_pipeline_available: bool
     errors: tuple[str, ...]
 
     def to_json(self) -> str:
@@ -67,6 +68,7 @@ def inspect_ai_runtime() -> AIRuntimeReport:
     ltx_i2v_pipeline_available = False
     gguf_loader_available = False
     group_offload_available = False
+    cogvideox_pipeline_available = False
 
     if diffusers_version is not None:
         try:
@@ -97,6 +99,14 @@ def inspect_ai_runtime() -> AIRuntimeReport:
             )
 
         try:
+            from diffusers import CogVideoXPipeline  # noqa: F401
+            cogvideox_pipeline_available = True
+        except Exception as exc:
+            errors.append(
+                f"CogVideoXPipeline unavailable: {type(exc).__name__}: {exc}"
+            )
+
+        try:
             from diffusers.hooks import apply_group_offloading  # noqa: F401
             from diffusers import LTXVideoTransformer3DModel
 
@@ -116,6 +126,7 @@ def inspect_ai_runtime() -> AIRuntimeReport:
         and ltx_i2v_pipeline_available
         and gguf_loader_available
         and group_offload_available
+        and cogvideox_pipeline_available
     )
 
     return AIRuntimeReport(
@@ -133,5 +144,6 @@ def inspect_ai_runtime() -> AIRuntimeReport:
         ltx_i2v_pipeline_available=ltx_i2v_pipeline_available,
         gguf_loader_available=gguf_loader_available,
         group_offload_available=group_offload_available,
+        cogvideox_pipeline_available=cogvideox_pipeline_available,
         errors=tuple(errors),
     )

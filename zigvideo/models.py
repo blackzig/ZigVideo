@@ -27,6 +27,19 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         project_target_vram_gb=2.0,
         notes="Fallback path for very weak GPUs/CPU: generate sparse AI keyframes and interpolate.",
     ),
+    "cogvideox-2b": ModelSpec(
+        key="cogvideox-2b",
+        display_name="CogVideoX 2B",
+        backend="diffusers",
+        tasks=frozenset({"t2v"}),
+        upstream_vram_gb=4.0,
+        project_target_vram_gb=4.0,
+        requires_bf16=False,
+        notes=(
+            "FP16-native legacy GPU candidate. Diffusers documents sequential CPU "
+            "offload below 4GB VRAM; validate quality before promoting to default."
+        ),
+    ),
     "ltxv-2b-distilled": ModelSpec(
         key="ltxv-2b-distilled",
         display_name="LTX-Video 2B Distilled",

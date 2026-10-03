@@ -35,10 +35,16 @@ def cmd_ai_check(_: argparse.Namespace) -> int:
 
 
 def cmd_generate(args: argparse.Namespace) -> int:
-    from .backends.ltx_gguf import (
-        generate_text_to_video,
-        generation_preview,
-    )
+    if args.backend == "cogvideox":
+        from .backends.cogvideox_fp16 import (
+            generate_text_to_video,
+            generation_preview,
+        )
+    else:
+        from .backends.ltx_gguf import (
+            generate_text_to_video,
+            generation_preview,
+        )
 
     if args.dry_run:
         print(
@@ -97,7 +103,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     generate = sub.add_parser(
         "generate",
-        help="Experimental low-VRAM text-to-video generation with LTX 2B GGUF.",
+        help="Experimental low-VRAM text-to-video generation.",
+    )
+    generate.add_argument(
+        "--backend",
+        choices=["ltx", "cogvideox"],
+        default="ltx",
+        help="Generation backend. CogVideoX is the FP16-native legacy GPU candidate.",
     )
     generate.add_argument("--prompt", required=True, help="English generation prompt.")
     generate.add_argument(
