@@ -337,10 +337,15 @@ def _decode_latents_staged(pipeline, packed_latents, attempt, generator):
             )[0]
 
     video = video.detach()
-    frames = pipeline.video_processor.postprocess_video(
+    batch_frames = pipeline.video_processor.postprocess_video(
         video,
         output_type="pil",
     )
+    if not batch_frames or not isinstance(batch_frames[0], list):
+        raise RuntimeError(
+            "Unexpected Diffusers video postprocess output; expected a batch of frame lists."
+        )
+    frames = batch_frames[0]
 
     try:
         pipeline.vae.to("cpu")
