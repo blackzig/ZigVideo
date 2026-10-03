@@ -33,6 +33,8 @@ def build_video_filter(
     target_width: int = 720,
     target_height: int = 1280,
     interpolation: str = "motion",
+    source_fps: float | None = None,
+    source_duration: float | None = None,
 ) -> str:
     if target_fps < 1:
         raise ValueError("target_fps must be >= 1")
@@ -42,10 +44,21 @@ def build_video_filter(
         raise ValueError("interpolation must be 'motion' or 'duplicate'")
 
     if interpolation == "motion":
-        temporal = (
+        minterpolate = (
             f"minterpolate=fps={target_fps}:mi_mode=mci:"
             "mc_mode=aobmc:me_mode=bidir:vsbmc=1"
         )
+        if source_fps and source_duration:
+            # minterpolate needs future frames to synthesize the final interval.
+            # Clone enough tail frames to provide that context, then trim back to
+            # the exact source duration so delivery does not become shorter.
+            tail_padding = 2.0 / source_fps
+            temporal = (
+                f"tpad=stop_mode=clone:stop_duration={tail_padding:.6f},"
+                f"{minterpolate},trim=duration={source_duration:.6f}"
+            )
+        else:
+            temporal = minterpolate
     else:
         temporal = f"fps={target_fps}"
 
@@ -80,6 +93,8 @@ def deliver_video(
         target_width=target_width,
         target_height=target_height,
         interpolation=interpolation,
+        source_fps=source_fps,
+        source_duration=source_seconds,
     )
 
     command = [
