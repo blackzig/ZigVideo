@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 import gc
 import json
 from pathlib import Path
@@ -123,8 +123,16 @@ def generation_preview(
     cache_dir: str | Path,
     output: str | Path,
     aspect: str = "16:9",
+    num_inference_steps: int | None = None,
 ) -> dict:
     attempts = build_attempt_ladder(preset, aspect)
+    if num_inference_steps is not None:
+        if num_inference_steps < 1:
+            raise ValueError("num_inference_steps must be >= 1")
+        attempts = [
+            replace(attempt, num_inference_steps=num_inference_steps)
+            for attempt in attempts
+        ]
     return {
         "backend": "ltx-gguf",
         "aspect": aspect,
@@ -378,6 +386,7 @@ def generate_text_to_video(
     aspect: str = "16:9",
     seed: int = 42,
     cache_dir: str | Path = "models/huggingface",
+    num_inference_steps: int | None = None,
 ) -> GenerationReport:
     import torch
     from diffusers.utils import export_to_video
@@ -400,6 +409,13 @@ def generate_text_to_video(
     total_started = time.perf_counter()
     load_started = time.perf_counter()
     attempts = build_attempt_ladder(preset, aspect)
+    if num_inference_steps is not None:
+        if num_inference_steps < 1:
+            raise ValueError("num_inference_steps must be >= 1")
+        attempts = [
+            replace(attempt, num_inference_steps=num_inference_steps)
+            for attempt in attempts
+        ]
     pipeline = _load_pipeline(cache_dir)
     load_seconds = time.perf_counter() - load_started
 

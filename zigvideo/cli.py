@@ -71,6 +71,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
                     args.cache_dir,
                     args.output,
                     aspect=args.aspect,
+                    num_inference_steps=args.steps,
                 ),
                 indent=2,
                 ensure_ascii=False,
@@ -85,6 +86,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
         aspect=args.aspect,
         seed=args.seed,
         cache_dir=args.cache_dir,
+        num_inference_steps=args.steps,
     )
     print(json.dumps(report.to_dict(), indent=2, ensure_ascii=False))
     return 0
@@ -145,6 +147,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["16:9", "9:16"],
         default="16:9",
         help="Output composition. Use 9:16 for Shorts, Reels and TikTok.",
+    )
+    generate.add_argument(
+        "--steps",
+        type=int,
+        default=None,
+        help="Override diffusion steps for controlled speed/quality experiments.",
     )
     generate.add_argument("--seed", type=int, default=42)
     generate.add_argument(

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 import gc
 import json
 from pathlib import Path
@@ -64,6 +64,7 @@ def generation_preview(
     cache_dir: str | Path,
     output: str | Path,
     aspect: str = "9:16",
+    num_inference_steps: int | None = None,
 ) -> dict:
     if preset not in PRESETS:
         raise ValueError(f"Unknown preset: {preset}")
@@ -71,6 +72,10 @@ def generation_preview(
         raise ValueError(f"Unsupported aspect ratio: {aspect}")
 
     attempt = PRESETS[preset]
+    if num_inference_steps is not None:
+        if num_inference_steps < 1:
+            raise ValueError("num_inference_steps must be >= 1")
+        attempt = replace(attempt, num_inference_steps=num_inference_steps)
     attempt.validate()
     return {
         "backend": "cogvideox-fp16",
@@ -167,6 +172,7 @@ def generate_text_to_video(
     aspect: str = "9:16",
     seed: int = 42,
     cache_dir: str | Path = "models/huggingface",
+    num_inference_steps: int | None = None,
 ) -> CogVideoXReport:
     import torch
     from diffusers.utils import export_to_video
@@ -185,6 +191,10 @@ def generate_text_to_video(
     cache_dir = Path(cache_dir)
 
     attempt = PRESETS[preset]
+    if num_inference_steps is not None:
+        if num_inference_steps < 1:
+            raise ValueError("num_inference_steps must be >= 1")
+        attempt = replace(attempt, num_inference_steps=num_inference_steps)
     attempt.validate()
 
     total_started = time.perf_counter()

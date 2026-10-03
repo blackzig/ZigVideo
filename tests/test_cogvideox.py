@@ -45,3 +45,17 @@ def test_installed_diffusers_exposes_cogvideox_pipeline():
     from diffusers import CogVideoXPipeline
 
     assert CogVideoXPipeline is not None
+
+
+def test_cogvideox_preview_allows_step_override(tmp_path):
+    preview = generation_preview(
+        preset="ultra-safe",
+        cache_dir=tmp_path / "models",
+        output=tmp_path / "preview.mp4",
+        aspect="9:16",
+        num_inference_steps=12,
+    )
+    assert preview["native_generation"]["num_inference_steps"] == 12
+    assert preview["native_generation"]["num_frames"] == 16
+    assert preview["native_generation"]["width"] == 720
+    assert preview["native_generation"]["height"] == 480
