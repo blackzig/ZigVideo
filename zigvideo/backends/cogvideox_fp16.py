@@ -228,7 +228,12 @@ def generate_text_to_video(
     reframe_seconds = time.perf_counter() - reframe_started
 
     export_started = time.perf_counter()
-    export_to_video(frames, str(output), fps=attempt.fps)
+    export_to_video(
+        frames,
+        str(output),
+        fps=attempt.fps,
+        macro_block_size=8,
+    )
     export_seconds = time.perf_counter() - export_started
 
     del result
