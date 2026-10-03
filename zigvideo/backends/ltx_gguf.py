@@ -141,6 +141,7 @@ def generation_preview(
         "quantization": QUANTIZATION_LABEL,
         "scheduler": "LTX FlowMatch + stochastic sampling",
         "offload": "GGUF-aware group offload; staged whole-VAE decode",
+        "vae_dtype": "float32",
         "vae_tiling": True,
         "cache_dir": str(Path(cache_dir)),
         "output": str(Path(output)),
@@ -149,7 +150,8 @@ def generation_preview(
             "The 6 GB legacy profile starts at the model's 640x384 low-resolution "
             "bucket for 16:9 or the native vertical 384x640 bucket for 9:16. "
             "Q5_K_M replaces the earlier Q3_K_S quality probe. The transformer "
-            "still computes in FP16 on pre-BF16 GPUs, which remains experimental."
+            "still computes in FP16 on pre-BF16 GPUs, while the VAE is kept in FP32 "
+            "to avoid precision loss during decode."
         ),
     }
 
@@ -189,7 +191,7 @@ def _load_quantized_transformer(gguf_path: str):
 
 def _load_pipeline(cache_dir: Path):
     import torch
-    from diffusers import FlowMatchEulerDiscreteScheduler, LTXPipeline
+    from diffusers import AutoencoderKLLTXVideo, FlowMatchEulerDiscreteScheduler, LTXPipeline
     from diffusers.hooks import apply_group_offloading
     from huggingface_hub import hf_hub_download
 
@@ -206,14 +208,27 @@ def _load_pipeline(cache_dir: Path):
     print("[ZigVideo] Loading quantized LTX transformer on CPU (FP16 compute)...")
     transformer = _load_quantized_transformer(gguf_path)
 
-    print("[ZigVideo] Loading LTX pipeline components...")
+    print("[ZigVideo] Loading LTX VAE in FP32 for numerically stable decode...")
+    vae = AutoencoderKLLTXVideo.from_pretrained(
+        PIPELINE_REPO,
+        subfolder="vae",
+        dtype=torch.float32,
+        cache_dir=str(cache_dir),
+        low_cpu_mem_usage=True,
+    )
+
+    print("[ZigVideo] Loading remaining LTX pipeline components...")
     pipeline = LTXPipeline.from_pretrained(
         PIPELINE_REPO,
         transformer=transformer,
+        vae=vae,
         dtype=torch.float16,
         cache_dir=str(cache_dir),
         low_cpu_mem_usage=True,
     )
+
+    if pipeline.vae.dtype != torch.float32:
+        pipeline.vae.to(dtype=torch.float32)
 
     # LTX 0.9.6 distilled's reference config uses stochastic sampling. The
     # Hugging Face base pipeline scheduler has the correct 0.95/2.05 dynamic
