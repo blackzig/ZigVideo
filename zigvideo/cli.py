@@ -34,8 +34,25 @@ def cmd_ai_check(_: argparse.Namespace) -> int:
     return 0 if report.ready else 1
 
 
+def _resolve_generation_backend(requested: str) -> str:
+    if requested != "auto":
+        return requested
+
+    hw = detect_hardware()
+    if (
+        hw.cuda_visible
+        and 4.0 <= hw.vram_gb <= 6.5
+        and (hw.compute_capability or 0) < 8.0
+    ):
+        return "cogvideox"
+    return "ltx"
+
+
 def cmd_generate(args: argparse.Namespace) -> int:
-    if args.backend == "cogvideox":
+    backend = _resolve_generation_backend(args.backend)
+    print(f"[ZigVideo] Selected backend: {backend}")
+
+    if backend == "cogvideox":
         from .backends.cogvideox_fp16 import (
             generate_text_to_video,
             generation_preview,
@@ -107,9 +124,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     generate.add_argument(
         "--backend",
-        choices=["ltx", "cogvideox"],
-        default="ltx",
-        help="Generation backend. CogVideoX is the FP16-native legacy GPU candidate.",
+        choices=["auto", "ltx", "cogvideox"],
+        default="auto",
+        help="Generation backend. Auto selects CogVideoX on legacy 4-6.5GB Turing/GTX GPUs.",
     )
     generate.add_argument("--prompt", required=True, help="English generation prompt.")
     generate.add_argument(
