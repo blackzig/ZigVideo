@@ -92,3 +92,16 @@ def test_torch_inference_mode_detaches_decode_outputs():
         output = layer(input_tensor)
 
     assert output.requires_grad is False
+
+
+def test_diffusers_pil_video_output_is_batched():
+    from PIL import Image
+
+    frame_a = Image.new("RGB", (16, 16))
+    frame_b = Image.new("RGB", (16, 16))
+    batch_frames = [[frame_a, frame_b]]
+
+    assert isinstance(batch_frames[0], list)
+    frames = batch_frames[0]
+    assert len(frames) == 2
+    assert all(isinstance(frame, Image.Image) for frame in frames)
