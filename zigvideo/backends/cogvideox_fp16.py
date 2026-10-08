@@ -8,7 +8,7 @@ import time
 
 from PIL import Image
 
-from ..quality import assess_tensor_video
+from ..quality import assess_tensor_video, classify_numerical_stage, summarize_latents
 
 
 MODEL_REPO = "THUDM/CogVideoX-2b"
@@ -50,6 +50,7 @@ class CogVideoXReport:
     native_attempt: dict
     delivery_resolution: str
     quality: dict
+    latent_checks: list[dict]
     load_seconds: float
     inference_seconds: float
     reframe_seconds: float
@@ -214,6 +215,23 @@ def generate_text_to_video(
         f"{attempt.num_inference_steps} steps @ {attempt.fps} fps"
     )
 
+    # Only three scalar diagnostics are collected to avoid significantly
+    # slowing down low-VRAM diffusion.
+    latent_checks: list[dict] = []
+    checkpoints = {0, attempt.num_inference_steps // 2, attempt.num_inference_steps - 1}
+
+    def check_latents(_pipeline, step_index, timestep, callback_kwargs):
+        if step_index in checkpoints:
+            metrics = summarize_latents(callback_kwargs["latents"], step_index + 1)
+            latent_checks.append(metrics)
+            print(
+                "[ZigVideo] Latents: "
+                f"step={step_index + 1}, "
+                f"nonfinite={metrics['nonfinite_fraction']:.6%}, "
+                f"dtype={metrics['dtype']}"
+            )
+        return callback_kwargs
+
     inference_started = time.perf_counter()
     with torch.inference_mode():
         result = pipeline(
@@ -229,12 +247,15 @@ def generate_text_to_video(
             guidance_scale=attempt.guidance_scale,
             generator=generator,
             output_type="pt",
+            callback_on_step_end=check_latents,
+            callback_on_step_end_tensor_inputs=["latents"],
         )
     inference_seconds = time.perf_counter() - inference_started
 
     # Inspect tensors before NumPy/PIL conversion to catch NaN, Inf,
     # and near-black output that would otherwise be silently exported.
     frames, quality = assess_tensor_video(result.frames[0])
+    quality["numerical_stage"] = classify_numerical_stage(latent_checks, quality)
     print(
         "[ZigVideo] Quality preflight: "
         f"status={quality['status']}, "
@@ -276,6 +297,7 @@ def generate_text_to_video(
         native_attempt=asdict(attempt),
         delivery_resolution=f"{frames[0].width}x{frames[0].height}",
         quality=quality,
+        latent_checks=latent_checks,
         load_seconds=round(load_seconds, 2),
         inference_seconds=round(inference_seconds, 2),
         reframe_seconds=round(reframe_seconds, 2),
