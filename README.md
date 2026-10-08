@@ -215,3 +215,29 @@ output observed only after decoding. Inspection adds small GPU tensor
 reductions at only three checkpoints; it does not regenerate or repair
 corrupted pixels. Do not assume FP32 VAE is the solution without this
 stage evidence.
+
+
+### FP32 VAE isolation experiment
+
+The 8-step diagnostic found **0% non-finite latents** at steps 1, 5 and 8,
+but **18.33% non-finite values after decode**, with all pixels almost black.
+These sampled checks constrain, but do not conclusively localize, the fault.
+
+A new optional `--vae-fp32` switch keeps CogVideoX transformer/text-encoder
+in FP16 while loading the VAE in FP32 **before** installing CPU-offload hooks.
+The CogVideoX backend now also records `raw_vae` statistics from the decoded
+tensor before Diffusers' video postprocessor, as well as
+`quality.decode_stage` in the JSON report. This is a diagnostic experiment,
+not yet a validated quality fix. FP32 decode may require more memory/time.
+
+```powershell
+.\.venv\Scripts\zigvideo.exe generate `
+  --backend cogvideox `
+  --prompt "A small friendly robot clearly visible in the center of the frame, full body, walking slowly through a rainy futuristic city street at night, detailed metallic body, neon reflections on wet pavement, cinematic lighting, realistic scene" `
+  --preset ultra-safe `
+  --aspect 9:16 `
+  --steps 8 `
+  --seed 42 `
+  --vae-fp32 `
+  --output outputs\cogvideo-8steps-vae-fp32.mp4
+```
