@@ -250,3 +250,34 @@ numeric artifact, not a playable video. It can support future **decode-only**
 experiments without rerunning the expensive transformer; the decode-only
 command is not yet implemented. This diagnostic mode keeps the baseline
 unchanged unless `--vae-fp32` and/or `--save-latents` are passed.
+
+
+### Decode-only diagnostic (no new diffusion)
+
+Once `--save-latents` has produced a `.latents.safetensors` file,
+use `zigvideo decode` to load **only the CogVideoX VAE** in FP32 on CPU.
+This avoids repeating transformer inference. It uses the exact CogVideoX
+pipeline latent layout: `[batch, latent_frames, 16, latent_height, latent_width]`.
+
+```powershell
+.\.venv\Scripts\zigvideo.exe decode `
+  --latents outputs\cogvideo-8steps-vae-fp32.latents.safetensors `
+  --output outputs\cogvideo-8steps-cpu-decode.mp4 `
+  --fps 8 `
+  --aspect 9:16 `
+  --dry-run
+```
+
+Remove `--dry-run` to decode the video. The standalone decoder reports
+a sampled **raw VAE value distribution** and the final pixel-quality metrics,
+including how often raw values lie at or below -1 (which the video
+postprocessor maps to black). This path uses CPU/RAM, not the GTX, and may
+take several minutes. It is a diagnostic mode, **not** an automatic repair
+for the 8-step output.
+
+The 8-step FP32-VAE experiment removed non-finite VAE values but still
+produced a fully near-black video (maximum final pixel value 2/255). The
+saved final latents were finite, so further work should focus on the raw
+decoder distribution and whether 8 diffusion steps provide a useful
+signal for this model. Do not infer from finite latents alone that all
+internal operations of the diffusion model were numerically sound.
