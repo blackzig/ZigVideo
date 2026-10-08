@@ -63,14 +63,18 @@ def cmd_generate(args: argparse.Namespace) -> int:
             generation_preview,
         )
 
-    if (args.vae_fp32 or args.save_latents) and backend != "cogvideox":
+    if (args.vae_fp32 or args.save_latents or args.offload != "sequential") and backend != "cogvideox":
         raise ValueError(
-            "--vae-fp32 and --save-latents are currently supported "
-            "only by the CogVideoX backend."
+            "--vae-fp32, --save-latents and group offloading "
+            "are currently supported only by the CogVideoX backend."
         )
 
     backend_kwargs = (
-        {"vae_fp32": args.vae_fp32, "save_latents": args.save_latents}
+        {
+            "vae_fp32": args.vae_fp32,
+            "save_latents": args.save_latents,
+            "offload_strategy": args.offload,
+        }
         if backend == "cogvideox"
         else {}
     )
@@ -216,6 +220,15 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Override diffusion steps for controlled speed/quality experiments.",
+    )
+    generate.add_argument(
+        "--offload",
+        choices=["sequential", "group"],
+        default="sequential",
+        help=(
+            "CogVideoX CPU/GPU transfer strategy. 'group' is experimental; "
+            "use --steps 1 for an OOM/speed smoke test first."
+        ),
     )
     generate.add_argument(
         "--vae-fp32",
