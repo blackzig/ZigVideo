@@ -173,3 +173,28 @@ third-party model components into `models/huggingface`.
 
 The `ultra-safe` profile deliberately starts at 320x192, 9 frames and 8
 inference steps. It is a compatibility experiment, not a quality preset.
+
+
+## Legacy 6 GB output-quality checkpoint (2026-10)
+
+The CogVideoX 2B FP16 backend runs end-to-end on GTX 1660 SUPER 6 GB.
+Controlled tests kept prompt, seed (42), native 720x480 generation, 16 frames,
+8 FPS, and guidance 6.0 constant. Changing only denoising steps resulted in:
+
+| Steps | Total runtime | Observed visual result |
+|---|---:|---|
+| 30 | ~43.2 min | Clearly recognizable robot with strong contrast |
+| 12 | ~20.9 min | Recognizable robot, but extremely dark |
+| 8 | ~15.8 min | Near-solid black output, unusable |
+
+Lowering steps did not preserve acceptable output quality in this test; do not
+use 8-step CogVideoX as a validated preview profile. A runtime warning
+(`invalid value encountered in cast`) appeared during conversion and is not
+by itself proof of where the numerical fault occurred.
+
+To diagnose this, ZigVideo now requests `output_type="pt"` from CogVideoX,
+checks raw postprocessed frame tensors for NaN/Inf and low luminance, and writes
+metrics plus a quality status into the generation JSON before image conversion.
+These metrics do not replace reviewing the produced video. Suggested next
+controlled experiment: test an intermediate 20-step run rather than assuming
+the fastest run is usable.
