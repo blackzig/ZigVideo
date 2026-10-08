@@ -334,8 +334,31 @@ component according to the Diffusers 0.40 documentation:
 - The sequential baseline remains completely separate; hooks are not
   mixed on the same component.
 
-This component-wise correction has **unit tests, but no real GTX
-validation yet**. Do not claim a speed improvement until measured.
+The component-wise correction **was validated** on the GTX 1660 SUPER on
+2026-10-08: 40 tests passed, the one-step run completed and produced MP4,
+JSON and saved latents, with **peak CUDA allocated 3.78 GB**. However, the
+single denoising step required 106.40 seconds and the complete pipeline
+after model loading required 309.49 seconds. It generated near-black
+content with 18.33% non-finite FP16 VAE output, which is not unexpected
+with only one denoising step.
+
+**Decision:** group offloading is supported as a diagnostic experiment but
+is **not the recommended faster preset** for this GTX. In these
+experiments, it offered no evidence of speedup over the established
+75-79 s/step sequential baseline. Do not run a 30-step group benchmark
+unless there is a specific new hypothesis or optimization to test.
+
+The new stage-aware profiler reports:
+- `prompt_setup_and_first_step_seconds` (includes T5 and setup)
+- `subsequent_step_mean_seconds` (steady-state estimate, null with one step)
+- `time_to_final_latents_seconds` (before VAE)
+- `vae_decode_seconds` (VAE forward alone)
+- `remaining_pipeline_seconds` (postprocessing and hooks)
+- `pipeline_total_seconds`
+
+This avoids the older misleading display of the **309.49-second**
+full pipeline as `s/step`. The reported peak CUDA allocation is a
+PyTorch allocation metric, **not** total hardware VRAM use.
 
 ### One-step diagnostic run (do not evaluate video quality)
 
@@ -354,11 +377,12 @@ git pull
   --dry-run
 ```
 
-If tests and the dry run pass, remove `--dry-run`. The saved
-`outputs/group-offload-smoke-v2.latents.safetensors` is now written
-**at the final denoising callback, before VAE decode** so it remains
-available if VAE decoding fails again. An intentionally single-step
-video should not be considered a meaningful quality result.
+This experiment **has already been completed** on the GTX 1660 SUPER.
+The saved `outputs/group-offload-smoke-v2.latents.safetensors` was
+written successfully at the final denoising callback, before VAE decode.
+The command is retained here for reproducibility, **not** as a request
+to run it again. An intentionally single-step video is not a
+meaningful quality result.
 
 Stop after this smoke test and compare load time, inference time,
 peak allocated GPU memory, and any error with the known sequential
