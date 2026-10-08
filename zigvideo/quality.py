@@ -107,3 +107,33 @@ def classify_numerical_stage(latent_checks: list[dict], frame_quality: dict) -> 
         return "postdecode_nonfinite_latent_stage_not_checked"
 
     return "no_nonfinite_detected_in_sampled_stages"
+
+
+
+def summarize_decoded_tensor(tensor: Any) -> dict:
+    """Check the raw VAE output before normalization or uint8 conversion."""
+    import torch
+
+    raw = tensor.detach()
+    if raw.numel() == 0:
+        raise ValueError("Cannot inspect an empty VAE tensor")
+
+    finite = torch.isfinite(raw)
+    nonfinite_fraction = 1.0 - finite.count_nonzero().item() / raw.numel()
+    return {
+        "dtype": str(raw.dtype),
+        "shape": list(raw.shape),
+        "nonfinite_fraction": round(float(nonfinite_fraction), 8),
+    }
+
+
+def identify_decode_stage(
+    latent_checks: list[dict], raw_vae: dict, output_quality: dict
+) -> str:
+    if any(row["nonfinite_fraction"] > 0 for row in latent_checks):
+        return "nonfinite_during_denoising"
+    if raw_vae.get("nonfinite_fraction", 0) > 0:
+        return "nonfinite_in_raw_vae_output"
+    if output_quality.get("nonfinite_fraction", 0) > 0:
+        return "nonfinite_after_vae_before_or_during_postprocess"
+    return "no_nonfinite_at_observed_stages"
