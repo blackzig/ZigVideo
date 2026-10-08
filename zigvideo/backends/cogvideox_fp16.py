@@ -251,6 +251,36 @@ def configure_offload(pipeline, torch, offload_strategy: str) -> None:
         raise ValueError(f"Unsupported offload strategy: {offload_strategy}")
 
 
+def save_final_latents(
+    latents,
+    output: Path,
+    attempt: CogVideoXAttempt,
+    seed: int,
+) -> str:
+    """Persist small final latent tensor before VAE decoding can fail."""
+    from safetensors.torch import save_file
+
+    destination = output.with_suffix(".latents.safetensors")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    data = latents.detach().to("cpu").contiguous()
+    save_file(
+        {"latents": data},
+        str(destination),
+        metadata={
+            "model": MODEL_REPO,
+            "width": str(attempt.width),
+            "height": str(attempt.height),
+            "frames": str(attempt.num_frames),
+            "steps": str(attempt.num_inference_steps),
+            "seed": str(seed),
+            "note": "Final CogVideoX denoising latents; not decoded video frames.",
+        },
+    )
+    filename = str(destination.resolve())
+    print(f"[ZigVideo] Final latents saved before VAE decode: {filename}")
+    return filename
+
+
 def generate_text_to_video(
     prompt: str,
     output: str | Path,
@@ -327,13 +357,16 @@ def generate_text_to_video(
     # Only three scalar diagnostics are collected to avoid significantly
     # slowing down low-VRAM diffusion.
     latent_checks: list[dict] = []
-    last_latents = []
+    latent_file: str | None = None
     checkpoints = {0, attempt.num_inference_steps // 2, attempt.num_inference_steps - 1}
 
     def check_latents(_pipeline, step_index, timestep, callback_kwargs):
+        nonlocal latent_file
         if save_latents and step_index == attempt.num_inference_steps - 1:
-            last_latents.append(
-                callback_kwargs["latents"].detach().to("cpu").clone().contiguous()
+            # Capture on the last denoising step; pipeline() then invokes the
+            # VAE internally and could raise before it returns.
+            latent_file = save_final_latents(
+                callback_kwargs["latents"], output, attempt, seed
             )
         if step_index in checkpoints:
             metrics = summarize_latents(callback_kwargs["latents"], step_index + 1)
@@ -374,30 +407,6 @@ def generate_text_to_video(
         f"{inference_seconds / attempt.num_inference_steps:.2f} s/step; "
         f"peak CUDA allocated: {peak_cuda_allocated_gb:.2f} GB"
     )
-
-    latent_file = None
-    if save_latents:
-        if len(last_latents) != 1:
-            raise RuntimeError("Failed to capture final CogVideoX latent tensor.")
-        from safetensors.torch import save_file
-
-        destination = output.with_suffix(".latents.safetensors")
-        save_file(
-            {"latents": last_latents[0]},
-            str(destination),
-            metadata={
-                "model": MODEL_REPO,
-                "width": str(attempt.width),
-                "height": str(attempt.height),
-                "frames": str(attempt.num_frames),
-                "steps": str(attempt.num_inference_steps),
-                "seed": str(seed),
-                "note": "Final CogVideoX denoising latents; not decoded video frames.",
-            },
-        )
-        latent_file = str(destination.resolve())
-        print(f"[ZigVideo] Final latents saved: {latent_file}")
-        last_latents.clear()
 
     # Inspect tensors before NumPy/PIL conversion to catch NaN, Inf,
     # and near-black output that would otherwise be silently exported.
