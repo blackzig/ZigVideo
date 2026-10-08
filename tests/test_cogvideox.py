@@ -59,3 +59,39 @@ def test_cogvideox_preview_allows_step_override(tmp_path):
     assert preview["native_generation"]["num_frames"] == 16
     assert preview["native_generation"]["width"] == 720
     assert preview["native_generation"]["height"] == 480
+
+
+def test_quality_preflight_detects_black_output():
+    import numpy as np
+    from zigvideo.quality import assess_tensor_video
+
+    source = np.zeros((2, 3, 8, 8), dtype=np.float32)
+    frames, metrics = assess_tensor_video(source)
+    assert len(frames) == 2
+    assert metrics["status"] == "near_black"
+    assert metrics["maximum_pixel_value_0_255"] == 0
+
+
+def test_quality_preflight_reports_nan_inf():
+    import numpy as np
+    from zigvideo.quality import assess_tensor_video
+
+    source = np.ones((2, 3, 8, 8), dtype=np.float32)
+    source[0, 0, 0, 0] = np.nan
+    source[1, 1, 0, 0] = np.inf
+    frames, metrics = assess_tensor_video(source)
+    assert metrics["status"] == "nonfinite_detected"
+    assert metrics["nonfinite_fraction"] > 0
+    assert frames[0].getpixel((0, 0))[0] == 0
+    assert frames[1].getpixel((0, 0))[1] == 255
+
+
+def test_quality_preflight_keeps_normal_content():
+    import numpy as np
+    from zigvideo.quality import assess_tensor_video
+
+    source = np.full((2, 3, 8, 8), 0.5, dtype=np.float32)
+    frames, metrics = assess_tensor_video(source)
+    assert len(frames) == 2
+    assert metrics["status"] == "plausible"
+    assert metrics["bright_pixel_fraction"] == 1.0
