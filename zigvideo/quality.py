@@ -120,10 +120,26 @@ def summarize_decoded_tensor(tensor: Any) -> dict:
 
     finite = torch.isfinite(raw)
     nonfinite_fraction = 1.0 - finite.count_nonzero().item() / raw.numel()
+
+    # The full decoded video can be large. Use a reproducible strided sample
+    # for value ranges, keeping only the non-finite fraction as an exact metric.
+    stride = max(1, raw.numel() // 65536)
+    sample = raw.flatten()[::stride].float().cpu()
+    valid_sample = sample[torch.isfinite(sample)]
+    distribution = {
+        "sample_count": int(sample.numel()),
+        "sample_min": float(valid_sample.min().item()) if valid_sample.numel() else None,
+        "sample_max": float(valid_sample.max().item()) if valid_sample.numel() else None,
+        "sample_mean": float(valid_sample.mean().item()) if valid_sample.numel() else None,
+        "sample_fraction_below_minus_one": round(float((valid_sample <= -1).float().mean().item()), 6)
+        if valid_sample.numel()
+        else None,
+    }
     return {
         "dtype": str(raw.dtype),
         "shape": list(raw.shape),
         "nonfinite_fraction": round(float(nonfinite_fraction), 8),
+        **distribution,
     }
 
 
