@@ -131,3 +131,47 @@ def test_numerical_stage_diagnosis():
         [{"nonfinite_fraction": 0.1}],
         {"nonfinite_fraction": 0.18},
     ) == "nonfinite_observed_during_denoising"
+
+
+
+def test_cogvideox_fp32_vae_preview_keeps_transformer_fp16(tmp_path):
+    preview = generation_preview(
+        preset="ultra-safe",
+        cache_dir=tmp_path / "models",
+        output=tmp_path / "preview.mp4",
+        aspect="9:16",
+        num_inference_steps=8,
+        vae_fp32=True,
+    )
+    assert preview["precision"] == "float16"
+    assert preview["vae_precision"] == "float32"
+    assert preview["native_generation"]["num_inference_steps"] == 8
+
+
+def test_raw_vae_check_detects_nonfinite_values():
+    import torch
+    from zigvideo.quality import summarize_decoded_tensor
+
+    frames = torch.tensor(
+        [[[[[0.25, float("nan"), float("inf")]]]]],
+        dtype=torch.float16,
+    )
+    result = summarize_decoded_tensor(frames)
+    assert result["dtype"] == "torch.float16"
+    assert result["nonfinite_fraction"] == 0.66666667
+
+
+def test_stage_classification_separates_raw_vae_from_postprocessor():
+    from zigvideo.quality import identify_decode_stage
+
+    latent_checks = [{"nonfinite_fraction": 0.0}]
+    assert identify_decode_stage(
+        latent_checks,
+        {"nonfinite_fraction": 0.18},
+        {"nonfinite_fraction": 0.18},
+    ) == "nonfinite_in_raw_vae_output"
+    assert identify_decode_stage(
+        latent_checks,
+        {"nonfinite_fraction": 0.0},
+        {"nonfinite_fraction": 0.18},
+    ) == "nonfinite_after_vae_before_or_during_postprocess"
