@@ -8,6 +8,8 @@ import time
 
 from PIL import Image
 
+from ..quality import assess_tensor_video
+
 
 MODEL_REPO = "THUDM/CogVideoX-2b"
 SUPPORTED_ASPECTS = ("16:9", "9:16")
@@ -47,6 +49,7 @@ class CogVideoXReport:
     seed: int
     native_attempt: dict
     delivery_resolution: str
+    quality: dict
     load_seconds: float
     inference_seconds: float
     reframe_seconds: float
@@ -225,13 +228,24 @@ def generate_text_to_video(
             num_inference_steps=attempt.num_inference_steps,
             guidance_scale=attempt.guidance_scale,
             generator=generator,
-            output_type="pil",
+            output_type="pt",
         )
     inference_seconds = time.perf_counter() - inference_started
 
-    frames = result.frames[0]
-    if not frames:
-        raise RuntimeError("CogVideoX returned no frames.")
+    # Inspect tensors before NumPy/PIL conversion to catch NaN, Inf,
+    # and near-black output that would otherwise be silently exported.
+    frames, quality = assess_tensor_video(result.frames[0])
+    print(
+        "[ZigVideo] Quality preflight: "
+        f"status={quality['status']}, "
+        f"nonfinite={quality['nonfinite_fraction']:.6%}, "
+        f"bright_pixels={quality['bright_pixel_fraction']:.2%}"
+    )
+    if quality["status"] != "plausible":
+        print(
+            "[ZigVideo] WARNING: Video may be unusable. Check the "
+            "quality diagnostics in the JSON report before delivery."
+        )
 
     reframe_started = time.perf_counter()
     frames = reframe_frames(frames, aspect)
@@ -261,6 +275,7 @@ def generate_text_to_video(
         seed=seed,
         native_attempt=asdict(attempt),
         delivery_resolution=f"{frames[0].width}x{frames[0].height}",
+        quality=quality,
         load_seconds=round(load_seconds, 2),
         inference_seconds=round(inference_seconds, 2),
         reframe_seconds=round(reframe_seconds, 2),
