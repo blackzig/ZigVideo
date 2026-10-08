@@ -58,6 +58,7 @@ class CogVideoXReport:
     quality: dict
     raw_vae: dict
     vae_precision: str
+    latent_file: str | None
     latent_checks: list[dict]
     load_seconds: float
     inference_seconds: float
@@ -78,6 +79,7 @@ def generation_preview(
     aspect: str = "9:16",
     num_inference_steps: int | None = None,
     vae_fp32: bool = False,
+    save_latents: bool = False,
 ) -> dict:
     if preset not in PRESETS:
         raise ValueError(f"Unknown preset: {preset}")
@@ -95,6 +97,7 @@ def generation_preview(
         "model_repo": MODEL_REPO,
         "precision": "float16",
         "vae_precision": "float32" if vae_fp32 else "float16",
+        "save_latents": save_latents,
         "offload": "sequential CPU offload",
         "vae_tiling": True,
         "native_generation": asdict(attempt),
@@ -194,6 +197,7 @@ def generate_text_to_video(
     cache_dir: str | Path = "models/huggingface",
     num_inference_steps: int | None = None,
     vae_fp32: bool = False,
+    save_latents: bool = False,
 ) -> CogVideoXReport:
     import torch
     from diffusers.utils import export_to_video
@@ -254,9 +258,14 @@ def generate_text_to_video(
     # Only three scalar diagnostics are collected to avoid significantly
     # slowing down low-VRAM diffusion.
     latent_checks: list[dict] = []
+    last_latents = []
     checkpoints = {0, attempt.num_inference_steps // 2, attempt.num_inference_steps - 1}
 
     def check_latents(_pipeline, step_index, timestep, callback_kwargs):
+        if save_latents and step_index == attempt.num_inference_steps - 1:
+            last_latents.append(
+                callback_kwargs["latents"].detach().to("cpu").clone().contiguous()
+            )
         if step_index in checkpoints:
             metrics = summarize_latents(callback_kwargs["latents"], step_index + 1)
             latent_checks.append(metrics)
@@ -287,6 +296,30 @@ def generate_text_to_video(
             callback_on_step_end_tensor_inputs=["latents"],
         )
     inference_seconds = time.perf_counter() - inference_started
+
+    latent_file = None
+    if save_latents:
+        if len(last_latents) != 1:
+            raise RuntimeError("Failed to capture final CogVideoX latent tensor.")
+        from safetensors.torch import save_file
+
+        destination = output.with_suffix(".latents.safetensors")
+        save_file(
+            {"latents": last_latents[0]},
+            str(destination),
+            metadata={
+                "model": MODEL_REPO,
+                "width": str(attempt.width),
+                "height": str(attempt.height),
+                "frames": str(attempt.num_frames),
+                "steps": str(attempt.num_inference_steps),
+                "seed": str(seed),
+                "note": "Final CogVideoX denoising latents; not decoded video frames.",
+            },
+        )
+        latent_file = str(destination.resolve())
+        print(f"[ZigVideo] Final latents saved: {latent_file}")
+        last_latents.clear()
 
     # Inspect tensors before NumPy/PIL conversion to catch NaN, Inf,
     # and near-black output that would otherwise be silently exported.
@@ -336,6 +369,7 @@ def generate_text_to_video(
         quality=quality,
         raw_vae=raw_vae,
         vae_precision="float32" if vae_fp32 else "float16",
+        latent_file=latent_file,
         latent_checks=latent_checks,
         load_seconds=round(load_seconds, 2),
         inference_seconds=round(inference_seconds, 2),
