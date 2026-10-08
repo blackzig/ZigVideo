@@ -239,5 +239,14 @@ not yet a validated quality fix. FP32 decode may require more memory/time.
   --steps 8 `
   --seed 42 `
   --vae-fp32 `
+  --save-latents `
   --output outputs\cogvideo-8steps-vae-fp32.mp4
 ```
+
+
+With `--save-latents`, the final latent tensor is saved alongside the video
+as `outputs/cogvideo-8steps-vae-fp32.latents.safetensors`. This is a small
+numeric artifact, not a playable video. It can support future **decode-only**
+experiments without rerunning the expensive transformer; the decode-only
+command is not yet implemented. This diagnostic mode keeps the baseline
+unchanged unless `--vae-fp32` and/or `--save-latents` are passed.
