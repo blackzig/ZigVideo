@@ -191,3 +191,64 @@ def test_latent_safetensors_roundtrip(tmp_path):
     assert loaded.dtype == torch.float16
     assert loaded.shape == latents.shape
     assert torch.equal(loaded, latents)
+
+
+
+def test_cogvideox_offload_group_preview_is_opt_in(tmp_path):
+    preview = generation_preview(
+        preset="ultra-safe",
+        cache_dir=tmp_path / "models",
+        output=tmp_path / "group-smoke.mp4",
+        aspect="9:16",
+        num_inference_steps=1,
+        offload_strategy="group",
+    )
+    assert preview["offload_strategy"] == "group"
+    assert preview["native_generation"]["num_inference_steps"] == 1
+    assert "experimental" in preview["offload"]
+
+
+def test_cogvideox_default_offload_remains_sequential(tmp_path):
+    preview = generation_preview(
+        preset="ultra-safe",
+        cache_dir=tmp_path / "models",
+        output=tmp_path / "baseline.mp4",
+    )
+    assert preview["offload_strategy"] == "sequential"
+
+
+def test_cogvideox_group_offload_uses_one_block_without_streams():
+    import torch
+
+    from zigvideo.backends.cogvideox_fp16 import configure_offload
+
+    class FakePipeline:
+        def __init__(self):
+            self.sequential_called = False
+            self.group_arguments = None
+
+        def enable_sequential_cpu_offload(self, **kwargs):
+            self.sequential_called = True
+
+        def enable_group_offload(self, **kwargs):
+            self.group_arguments = kwargs
+
+    pipe = FakePipeline()
+    configure_offload(pipe, torch, "group")
+    assert pipe.sequential_called is False
+    assert pipe.group_arguments["onload_device"] == torch.device("cuda")
+    assert pipe.group_arguments["offload_type"] == "block_level"
+    assert pipe.group_arguments["num_blocks_per_group"] == 1
+    assert pipe.group_arguments["use_stream"] is False
+
+
+def test_cogvideox_invalid_offload_rejected(tmp_path):
+    import pytest
+
+    with pytest.raises(ValueError, match="Unsupported offload"):
+        generation_preview(
+            preset="ultra-safe",
+            cache_dir=tmp_path / "models",
+            output=tmp_path / "invalid.mp4",
+            offload_strategy="not-valid",
+        )
