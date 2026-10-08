@@ -108,7 +108,7 @@ def generation_preview(
         "offload": (
             "sequential CPU offload"
             if offload_strategy == "sequential"
-            else "experimental block-level group offload (1 block/group, no streams)"
+            else "experimental component-wise: transformer block 1/group, VAE/T5 leaf, no streams"
         ),
         "offload_strategy": offload_strategy,
         "vae_tiling": True,
@@ -204,25 +204,47 @@ def _load_pipeline(
 
 
 def configure_offload(pipeline, torch, offload_strategy: str) -> None:
-    """Install only one offload strategy to avoid incompatible hooks."""
+    """Configure each pipeline component without mixing hooks on any one model.
+
+    The full-pipeline block-level strategy left the CogVideoX VAE's conv_in
+    weights on CPU while its inputs were on CUDA, because the VAE decode()
+    path bypasses some top-level forward hooks. Leaf-level hooks on the VAE
+    apply to every convolution even when decode() is called directly.
+    """
     if offload_strategy == "sequential":
         print("[ZigVideo] Offload: sequential CPU (established GTX baseline).")
         pipeline.enable_sequential_cpu_offload(device="cuda")
     elif offload_strategy == "group":
+        from diffusers.hooks import apply_group_offloading
+
+        onload = torch.device("cuda")
+        offload = torch.device("cpu")
         print(
-            "[ZigVideo] Offload: experimental block-level group, "
-            "1 block/group, streams disabled."
+            "[ZigVideo] Offload: experimental component-wise group: "
+            "transformer block-level (1/group), VAE + T5 leaf-level, "
+            "streams disabled."
         )
-        if not hasattr(pipeline, "enable_group_offload"):
-            raise RuntimeError(
-                "Installed Diffusers lacks pipeline.enable_group_offload. "
-                "Keep --offload sequential or use a compatible Diffusers version."
-            )
-        pipeline.enable_group_offload(
-            onload_device=torch.device("cuda"),
-            offload_device=torch.device("cpu"),
+
+        # Do not call pipeline.enable_group_offload with block_level:
+        # CogVideoX VAE.decode bypasses the root module's forward hook.
+        pipeline.transformer.enable_group_offload(
+            onload_device=onload,
+            offload_device=offload,
             offload_type="block_level",
             num_blocks_per_group=1,
+            use_stream=False,
+        )
+        pipeline.vae.enable_group_offload(
+            onload_device=onload,
+            offload_device=offload,
+            offload_type="leaf_level",
+            use_stream=False,
+        )
+        apply_group_offloading(
+            pipeline.text_encoder,
+            onload_device=onload,
+            offload_device=offload,
+            offload_type="leaf_level",
             use_stream=False,
         )
     else:
