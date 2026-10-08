@@ -308,3 +308,55 @@ cause of the poor 8-step latent distribution remains unconfirmed.
 **Project decision:** the 8-step path is diagnostic only, not a quality
 preset. Keep 30 steps as the reference on GTX 1660 SUPER for this prompt
 while investigating speedups that do not simply reduce denoising steps.
+
+
+## Experimental faster GPU offload on legacy GTX (opt-in)
+
+The confirmed CogVideoX-2B GTX 1660 SUPER baseline uses
+`enable_sequential_cpu_offload`. On this GPU that costs around 75-79 seconds
+per denoising step, largely due to repeated CPU/GPU transfers and other
+inference overhead.
+
+Diffusers 0.40 supports **group offloading**, which transfers groups of
+blocks rather than individual submodules. ZigVideo exposes it as an opt-in
+experiment; it is **not yet confirmed to fit or improve speed on 6 GB GPUs**.
+The implementation uses block-level groups of **one block per group**, with
+streams **disabled** to keep the first experiment conservative.
+
+Default remains unchanged: `--offload sequential` (same as omitting it).
+Never enable Accelerate sequential hooks and Diffusers group hooks together.
+
+### Step 1: check the plan, no GPU use
+
+```powershell
+git pull
+.\.venv\Scripts\python.exe -m pytest -v
+.\.venv\Scripts\zigvideo.exe generate `
+  --backend cogvideox `
+  --prompt "A friendly robot walking through a rainy futuristic city" `
+  --preset ultra-safe `
+  --aspect 9:16 `
+  --steps 1 `
+  --offload group `
+  --output outputs\group-offload-smoke.mp4 `
+  --dry-run
+```
+
+### Step 2: one-step *compatibility* smoke test
+
+Remove `--dry-run` and keep `--steps 1`. This produces a video that will
+likely be visually unusable; **do not assess its quality**. Measure if the
+pipeline starts, whether CUDA OOM occurs, the logged `s/step`, and
+`peak_cuda_allocated_gb` in the JSON report. A 1-step measurement includes
+startup and may not predict sustained 30-step performance.
+
+Do **not** run a full 30-step `--offload group` comparison until the 1-step
+smoke test succeeds. If group offload fails or exceeds GTX 6 GB available
+memory, retain the sequential baseline. There is no automatic hook-strategy
+fallback within the same pipeline; restart the process to return to sequential.
+
+A subsequent same-prompt, same-seed, 30-step comparison would be necessary
+to establish both speedup and output quality. Do not infer performance
+improvement from docs or mock tests alone.
+
+Reference: https://huggingface.co/docs/diffusers/v0.40.0/optimization/memory
