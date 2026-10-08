@@ -310,53 +310,61 @@ preset. Keep 30 steps as the reference on GTX 1660 SUPER for this prompt
 while investigating speedups that do not simply reduce denoising steps.
 
 
-## Experimental faster GPU offload on legacy GTX (opt-in)
+## Experimental group offloading on GTX 1660 SUPER (diagnostic)
 
-The confirmed CogVideoX-2B GTX 1660 SUPER baseline uses
-`enable_sequential_cpu_offload`. On this GPU that costs around 75-79 seconds
-per denoising step, largely due to repeated CPU/GPU transfers and other
-inference overhead.
+The established CogVideoX-2B pipeline uses sequential CPU offload and
+typically takes 75-79 seconds per diffusion step on the tested GTX 1660
+SUPER 6 GB. The default remains `--offload sequential`.
 
-Diffusers 0.40 supports **group offloading**, which transfers groups of
-blocks rather than individual submodules. ZigVideo exposes it as an opt-in
-experiment; it is **not yet confirmed to fit or improve speed on 6 GB GPUs**.
-The implementation uses block-level groups of **one block per group**, with
-streams **disabled** to keep the first experiment conservative.
+**First group experiment: failed.** On 2026-10-08, the one-step
+`--offload group` test completed denoising in 134.26 seconds and
+then raised `RuntimeError: Input type (torch.cuda.HalfTensor) and weight
+type (torch.HalfTensor) should be the same` during VAE decoding.
+This was **not** a CUDA OOM. It did **not** demonstrate improved speed.
 
-Default remains unchanged: `--offload sequential` (same as omitting it).
-Never enable Accelerate sequential hooks and Diffusers group hooks together.
+**New implementation:** Instead of applying block-level offloading to the
+entire pipeline (which left some VAE convolution weights on CPU while
+inputs were on CUDA), the experimental mode configures each model
+component according to the Diffusers 0.40 documentation:
 
-### Step 1: check the plan, no GPU use
+- Transformer: block-level, one block per group, no streams.
+- VAE: leaf-level; handles `vae.decode()` even though the VAE's
+  root `forward()` method is not called.
+- Text encoder (T5): leaf-level.
+- The sequential baseline remains completely separate; hooks are not
+  mixed on the same component.
+
+This component-wise correction has **unit tests, but no real GTX
+validation yet**. Do not claim a speed improvement until measured.
+
+### One-step diagnostic run (do not evaluate video quality)
 
 ```powershell
 git pull
 .\.venv\Scripts\python.exe -m pytest -v
 .\.venv\Scripts\zigvideo.exe generate `
   --backend cogvideox `
-  --prompt "A friendly robot walking through a rainy futuristic city" `
+  --prompt "A small friendly robot walking through a rainy futuristic city" `
   --preset ultra-safe `
   --aspect 9:16 `
   --steps 1 `
   --offload group `
-  --output outputs\group-offload-smoke.mp4 `
+  --save-latents `
+  --output outputs\group-offload-smoke-v2.mp4 `
   --dry-run
 ```
 
-### Step 2: one-step *compatibility* smoke test
+If tests and the dry run pass, remove `--dry-run`. The saved
+`outputs/group-offload-smoke-v2.latents.safetensors` is now written
+**at the final denoising callback, before VAE decode** so it remains
+available if VAE decoding fails again. An intentionally single-step
+video should not be considered a meaningful quality result.
 
-Remove `--dry-run` and keep `--steps 1`. This produces a video that will
-likely be visually unusable; **do not assess its quality**. Measure if the
-pipeline starts, whether CUDA OOM occurs, the logged `s/step`, and
-`peak_cuda_allocated_gb` in the JSON report. A 1-step measurement includes
-startup and may not predict sustained 30-step performance.
+Stop after this smoke test and compare load time, inference time,
+peak allocated GPU memory, and any error with the known sequential
+baseline. If the run fails or is slower, keep the sequential
+offload strategy and do not spend time on a 30-step group run.
 
-Do **not** run a full 30-step `--offload group` comparison until the 1-step
-smoke test succeeds. If group offload fails or exceeds GTX 6 GB available
-memory, retain the sequential baseline. There is no automatic hook-strategy
-fallback within the same pipeline; restart the process to return to sequential.
-
-A subsequent same-prompt, same-seed, 30-step comparison would be necessary
-to establish both speedup and output quality. Do not infer performance
-improvement from docs or mock tests alone.
-
-Reference: https://huggingface.co/docs/diffusers/v0.40.0/optimization/memory
+References:
+- https://huggingface.co/docs/diffusers/v0.40.0/optimization/memory
+- https://github.com/huggingface/diffusers/blob/v0.40.0/src/diffusers/hooks/group_offloading.py
