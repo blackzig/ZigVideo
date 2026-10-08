@@ -63,11 +63,17 @@ def cmd_generate(args: argparse.Namespace) -> int:
             generation_preview,
         )
 
-    if args.vae_fp32 and backend != "cogvideox":
-        parser_error = "--vae-fp32 is currently supported only by the CogVideoX backend."
-        raise ValueError(parser_error)
+    if (args.vae_fp32 or args.save_latents) and backend != "cogvideox":
+        raise ValueError(
+            "--vae-fp32 and --save-latents are currently supported "
+            "only by the CogVideoX backend."
+        )
 
-    backend_kwargs = {"vae_fp32": args.vae_fp32} if backend == "cogvideox" else {}
+    backend_kwargs = (
+        {"vae_fp32": args.vae_fp32, "save_latents": args.save_latents}
+        if backend == "cogvideox"
+        else {}
+    )
 
     if args.dry_run:
         print(
@@ -181,6 +187,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--vae-fp32",
         action="store_true",
         help="Diagnostic CogVideoX mode: keep transformer FP16, decode VAE in FP32.",
+    )
+    generate.add_argument(
+        "--save-latents",
+        action="store_true",
+        help="Save the final CogVideoX latents to a safetensors file for decoder debugging.",
     )
     generate.add_argument("--seed", type=int, default=42)
     generate.add_argument(
