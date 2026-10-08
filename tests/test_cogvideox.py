@@ -142,9 +142,11 @@ def test_cogvideox_fp32_vae_preview_keeps_transformer_fp16(tmp_path):
         aspect="9:16",
         num_inference_steps=8,
         vae_fp32=True,
+        save_latents=True,
     )
     assert preview["precision"] == "float16"
     assert preview["vae_precision"] == "float32"
+    assert preview["save_latents"] is True
     assert preview["native_generation"]["num_inference_steps"] == 8
 
 
@@ -175,3 +177,17 @@ def test_stage_classification_separates_raw_vae_from_postprocessor():
         {"nonfinite_fraction": 0.0},
         {"nonfinite_fraction": 0.18},
     ) == "nonfinite_after_vae_before_or_during_postprocess"
+
+
+
+def test_latent_safetensors_roundtrip(tmp_path):
+    import torch
+    from safetensors.torch import load_file, save_file
+
+    latents = torch.ones((1, 4, 16, 8, 8), dtype=torch.float16)
+    path = tmp_path / "result.latents.safetensors"
+    save_file({"latents": latents}, str(path))
+    loaded = load_file(str(path))["latents"]
+    assert loaded.dtype == torch.float16
+    assert loaded.shape == latents.shape
+    assert torch.equal(loaded, latents)
