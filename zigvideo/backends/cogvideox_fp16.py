@@ -19,6 +19,7 @@ from ..quality import (
 
 MODEL_REPO = "THUDM/CogVideoX-2b"
 SUPPORTED_ASPECTS = ("16:9", "9:16")
+OFFLOAD_STRATEGIES = ("sequential", "group")
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,8 @@ class CogVideoXReport:
     quality: dict
     raw_vae: dict
     vae_precision: str
+    offload_strategy: str
+    peak_cuda_allocated_gb: float
     latent_file: str | None
     latent_checks: list[dict]
     load_seconds: float
@@ -80,11 +83,15 @@ def generation_preview(
     num_inference_steps: int | None = None,
     vae_fp32: bool = False,
     save_latents: bool = False,
+    offload_strategy: str = "sequential",
 ) -> dict:
     if preset not in PRESETS:
         raise ValueError(f"Unknown preset: {preset}")
     if aspect not in SUPPORTED_ASPECTS:
         raise ValueError(f"Unsupported aspect ratio: {aspect}")
+
+    if offload_strategy not in OFFLOAD_STRATEGIES:
+        raise ValueError(f"Unsupported offload strategy: {offload_strategy}")
 
     attempt = PRESETS[preset]
     if num_inference_steps is not None:
@@ -98,7 +105,12 @@ def generation_preview(
         "precision": "float16",
         "vae_precision": "float32" if vae_fp32 else "float16",
         "save_latents": save_latents,
-        "offload": "sequential CPU offload",
+        "offload": (
+            "sequential CPU offload"
+            if offload_strategy == "sequential"
+            else "experimental block-level group offload (1 block/group, no streams)"
+        ),
+        "offload_strategy": offload_strategy,
         "vae_tiling": True,
         "native_generation": asdict(attempt),
         "aspect": aspect,
@@ -158,7 +170,11 @@ def reframe_frames(frames: list[Image.Image], aspect: str) -> list[Image.Image]:
     return reframed
 
 
-def _load_pipeline(cache_dir: Path, vae_fp32: bool = False):
+def _load_pipeline(
+    cache_dir: Path,
+    vae_fp32: bool = False,
+    offload_strategy: str = "sequential",
+):
     import torch
     from diffusers import CogVideoXPipeline
 
@@ -178,14 +194,39 @@ def _load_pipeline(cache_dir: Path, vae_fp32: bool = False):
         print("[ZigVideo] Upcasting VAE weights to FP32 before offload...")
         pipeline.vae.to(dtype=torch.float32)
 
-    print("[ZigVideo] Enabling sequential CPU offload and VAE tiling...")
-    pipeline.enable_sequential_cpu_offload(device="cuda")
+    configure_offload(pipeline, torch, offload_strategy)
     if hasattr(pipeline.vae, "enable_tiling"):
         pipeline.vae.enable_tiling()
     if hasattr(pipeline.vae, "enable_slicing"):
         pipeline.vae.enable_slicing()
 
     return pipeline
+
+
+def configure_offload(pipeline, torch, offload_strategy: str) -> None:
+    """Install only one offload strategy to avoid incompatible hooks."""
+    if offload_strategy == "sequential":
+        print("[ZigVideo] Offload: sequential CPU (established GTX baseline).")
+        pipeline.enable_sequential_cpu_offload(device="cuda")
+    elif offload_strategy == "group":
+        print(
+            "[ZigVideo] Offload: experimental block-level group, "
+            "1 block/group, streams disabled."
+        )
+        if not hasattr(pipeline, "enable_group_offload"):
+            raise RuntimeError(
+                "Installed Diffusers lacks pipeline.enable_group_offload. "
+                "Keep --offload sequential or use a compatible Diffusers version."
+            )
+        pipeline.enable_group_offload(
+            onload_device=torch.device("cuda"),
+            offload_device=torch.device("cpu"),
+            offload_type="block_level",
+            num_blocks_per_group=1,
+            use_stream=False,
+        )
+    else:
+        raise ValueError(f"Unsupported offload strategy: {offload_strategy}")
 
 
 def generate_text_to_video(
@@ -198,6 +239,7 @@ def generate_text_to_video(
     num_inference_steps: int | None = None,
     vae_fp32: bool = False,
     save_latents: bool = False,
+    offload_strategy: str = "sequential",
 ) -> CogVideoXReport:
     import torch
     from diffusers.utils import export_to_video
@@ -215,6 +257,9 @@ def generate_text_to_video(
     output.parent.mkdir(parents=True, exist_ok=True)
     cache_dir = Path(cache_dir)
 
+    if offload_strategy not in OFFLOAD_STRATEGIES:
+        raise ValueError(f"Unsupported offload strategy: {offload_strategy}")
+
     attempt = PRESETS[preset]
     if num_inference_steps is not None:
         if num_inference_steps < 1:
@@ -224,7 +269,9 @@ def generate_text_to_video(
 
     total_started = time.perf_counter()
     load_started = time.perf_counter()
-    pipeline = _load_pipeline(cache_dir, vae_fp32=vae_fp32)
+    pipeline = _load_pipeline(
+        cache_dir, vae_fp32=vae_fp32, offload_strategy=offload_strategy
+    )
     load_seconds = time.perf_counter() - load_started
 
     # Inspect VAE output before the diffusers VideoProcessor applies its
@@ -277,6 +324,7 @@ def generate_text_to_video(
             )
         return callback_kwargs
 
+    torch.cuda.reset_peak_memory_stats()
     inference_started = time.perf_counter()
     with torch.inference_mode():
         result = pipeline(
@@ -296,6 +344,14 @@ def generate_text_to_video(
             callback_on_step_end_tensor_inputs=["latents"],
         )
     inference_seconds = time.perf_counter() - inference_started
+    peak_cuda_allocated_gb = round(
+        torch.cuda.max_memory_allocated() / (1024 ** 3), 3
+    )
+    print(
+        "[ZigVideo] Inference: "
+        f"{inference_seconds / attempt.num_inference_steps:.2f} s/step; "
+        f"peak CUDA allocated: {peak_cuda_allocated_gb:.2f} GB"
+    )
 
     latent_file = None
     if save_latents:
@@ -369,6 +425,8 @@ def generate_text_to_video(
         quality=quality,
         raw_vae=raw_vae,
         vae_precision="float32" if vae_fp32 else "float16",
+        offload_strategy=offload_strategy,
+        peak_cuda_allocated_gb=peak_cuda_allocated_gb,
         latent_file=latent_file,
         latent_checks=latent_checks,
         load_seconds=round(load_seconds, 2),
