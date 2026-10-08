@@ -295,3 +295,25 @@ def test_cogvideox_invalid_offload_rejected(tmp_path):
             output=tmp_path / "invalid.mp4",
             offload_strategy="not-valid",
         )
+
+
+
+def test_save_final_latents_before_decode(tmp_path):
+    import torch
+    from safetensors import safe_open
+
+    from zigvideo.backends.cogvideox_fp16 import (
+        CogVideoXAttempt,
+        save_final_latents,
+    )
+
+    attempt = CogVideoXAttempt(720, 480, 16, 8, 1)
+    latents = torch.ones((1, 4, 16, 60, 90), dtype=torch.float16)
+    output = tmp_path / "one-step-smoke.mp4"
+    saved_path = save_final_latents(latents, output, attempt, seed=42)
+    assert saved_path.endswith("one-step-smoke.latents.safetensors")
+
+    with safe_open(saved_path, framework="pt", device="cpu") as file:
+        assert file.get_slice("latents").get_shape() == [1, 4, 16, 60, 90]
+        assert file.metadata()["steps"] == "1"
+        assert file.metadata()["seed"] == "42"
