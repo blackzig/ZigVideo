@@ -198,3 +198,20 @@ metrics plus a quality status into the generation JSON before image conversion.
 These metrics do not replace reviewing the produced video. Suggested next
 controlled experiment: test an intermediate 20-step run rather than assuming
 the fastest run is usable.
+
+
+### Numerical stage diagnosis
+
+After the 20-step run produced a recognizable robot against a mostly black
+background, the post-decode validation measured 18.33% non-finite output
+values and 95.39% near-black pixels. This does **not** prove whether the
+transformer denoising or the VAE introduced the non-finite values.
+
+CogVideoX generation now inspects latent tensors at the first, middle and
+last diffusion steps and records `latent_checks` plus
+`quality.numerical_stage` in the generation JSON. The stage diagnostic
+distinguishes non-finite values observed during denoising from non-finite
+output observed only after decoding. Inspection adds small GPU tensor
+reductions at only three checkpoints; it does not regenerate or repair
+corrupted pixels. Do not assume FP32 VAE is the solution without this
+stage evidence.
