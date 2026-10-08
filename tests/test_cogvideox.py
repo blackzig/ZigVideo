@@ -95,3 +95,39 @@ def test_quality_preflight_keeps_normal_content():
     assert len(frames) == 2
     assert metrics["status"] == "plausible"
     assert metrics["bright_pixel_fraction"] == 1.0
+
+
+
+def test_latent_stats_remain_finite():
+    import torch
+    from zigvideo.quality import summarize_latents
+
+    x = torch.tensor([[[1.0, 2.0, -3.0]]], dtype=torch.float16)
+    stats = summarize_latents(x, step=3)
+    assert stats["step"] == 3
+    assert stats["nonfinite_fraction"] == 0
+    assert stats["finite_min"] == -3.0
+    assert stats["finite_max"] == 2.0
+
+
+def test_latent_stats_detect_nan_and_inf():
+    import torch
+    from zigvideo.quality import summarize_latents
+
+    x = torch.tensor([1.0, float("nan"), float("inf"), -2.0])
+    stats = summarize_latents(x, step=2)
+    assert stats["nonfinite_fraction"] == 0.5
+    assert stats["finite_min"] == -2.0
+
+
+def test_numerical_stage_diagnosis():
+    from zigvideo.quality import classify_numerical_stage
+
+    assert classify_numerical_stage(
+        [{"nonfinite_fraction": 0.0}],
+        {"nonfinite_fraction": 0.18},
+    ) == "latents_finite_at_sampled_steps_but_postdecode_nonfinite"
+    assert classify_numerical_stage(
+        [{"nonfinite_fraction": 0.1}],
+        {"nonfinite_fraction": 0.18},
+    ) == "nonfinite_observed_during_denoising"
