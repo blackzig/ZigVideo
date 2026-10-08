@@ -151,29 +151,29 @@ checked before redistribution.
 - Wan — consumer-oriented video models and workflows
 
 
-## Experimental first-video command
 
-After `zigvideo ai-check` and `zigvideo torch-check` both pass, inspect the
-first low-VRAM generation plan without downloading models:
+## First CogVideoX video on legacy 6 GB hardware
 
-```powershell
-.\.venv\Scripts\zigvideo.exe generate --prompt "A small robot walks through a rainy futuristic city at night, cinematic camera movement" --preset ultra-safe --dry-run
-```
-
-Then run the first real generation:
+The currently validated **text-to-video** backend for GTX 1660 SUPER 6 GB is
+CogVideoX-2B (native FP16), using sequential CPU offload. The legacy
+`--backend auto` selector chooses CogVideoX. The LTX 2B GGUF path remains
+experimental and produced unusable smeared output on this hardware.
 
 ```powershell
-.\.venv\Scripts\zigvideo.exe generate --prompt "A small robot walks through a rainy futuristic city at night, cinematic camera movement" --preset ultra-safe --output outputs/first-zigvideo.mp4
+.\.venv\Scripts\zigvideo.exe generate `
+  --prompt "A small friendly robot walking through a neon city, centered composition" `
+  --preset ultra-safe `
+  --aspect 9:16 `
+  --steps 30 `
+  --output outputs\robot-quality.mp4
 ```
 
-The experimental backend uses an LTX-Video 2B distilled GGUF transformer with
-FP16 compute, sequential CPU offload and VAE tiling. On CUDA OOM it automatically
-retries progressively smaller resolutions. The first run downloads several GB of
-third-party model components into `models/huggingface`.
-
-The `ultra-safe` profile deliberately starts at 320x192, 9 frames and 8
-inference steps. It is a compatibility experiment, not a quality preset.
-
+The model generates landscape 720x480 at 8 source fps, then ZigVideo reframes
+the central composition to portrait 360x640. `zigvideo deliver` can use motion
+interpolation and spatial scaling to produce a 720x1280, 24 fps delivery file.
+This **does not** add true 720p source detail. For the measured 6 GB setup,
+30 denoising steps have been a more reliable visual baseline than 8, 12, or
+20 in the controlled robot-prompt benchmark below.
 
 ## Legacy 6 GB output-quality checkpoint (2026-10)
 
@@ -195,9 +195,8 @@ by itself proof of where the numerical fault occurred.
 To diagnose this, ZigVideo now requests `output_type="pt"` from CogVideoX,
 checks raw postprocessed frame tensors for NaN/Inf and low luminance, and writes
 metrics plus a quality status into the generation JSON before image conversion.
-These metrics do not replace reviewing the produced video. Suggested next
-controlled experiment: test an intermediate 20-step run rather than assuming
-the fastest run is usable.
+These metrics do not replace reviewing the produced video. The subsequent 20-step experiment also produced a very dark output; see the
+stage-specific diagnostics below.
 
 
 ### Numerical stage diagnosis
@@ -246,9 +245,8 @@ not yet a validated quality fix. FP32 decode may require more memory/time.
 
 With `--save-latents`, the final latent tensor is saved alongside the video
 as `outputs/cogvideo-8steps-vae-fp32.latents.safetensors`. This is a small
-numeric artifact, not a playable video. It can support future **decode-only**
-experiments without rerunning the expensive transformer; the decode-only
-command is not yet implemented. This diagnostic mode keeps the baseline
+numeric artifact, not a playable video. It supports **decode-only**
+experiments without rerunning the expensive transformer, using `zigvideo decode`. This diagnostic mode keeps the baseline
 unchanged unless `--vae-fp32` and/or `--save-latents` are passed.
 
 
@@ -281,3 +279,32 @@ saved final latents were finite, so further work should focus on the raw
 decoder distribution and whether 8 diffusion steps provide a useful
 signal for this model. Do not infer from finite latents alone that all
 internal operations of the diffusion model were numerically sound.
+
+
+### Completed decode-only CPU/FP32 experiment
+
+The same saved 8-step latent tensor was decoded again **without diffusion**
+using only CogVideoX's VAE in FP32 on CPU (361.82 s). Results:
+
+| Raw VAE sample metric | Observation |
+|---|---:|
+| Non-finite values | 0% |
+| Sample minimum | -1.0540061 |
+| Sample maximum | -0.9854688 |
+| Sample mean | -1.0188351 |
+| Share at or below -1 | 71.7488% |
+| Final pixel maximum | 2/255 |
+| Final video status | near_black |
+
+The CogVideoX video postprocessor maps raw values from approximately [-1, 1]
+to [0, 1] and clips outside that range. With virtually every sampled VAE
+output value near or below -1, the image becomes near-black. **This occurs
+on CPU and GPU with FP32 VAE output**, so repeatedly changing the VAE
+offload method, MP4 encoding, or display scaling is not a promising remedy
+for these saved 8-step latents. Finite latent values do not guarantee
+that the denoising trajectory contains useful image signal. The exact root
+cause of the poor 8-step latent distribution remains unconfirmed.
+
+**Project decision:** the 8-step path is diagnostic only, not a quality
+preset. Keep 30 steps as the reference on GTX 1660 SUPER for this prompt
+while investigating speedups that do not simply reduce denoising steps.
