@@ -217,7 +217,58 @@ def test_cogvideox_default_offload_remains_sequential(tmp_path):
     assert preview["offload_strategy"] == "sequential"
 
 
-def test_cogvideox_group_offload_uses_one_block_without_streams():
+def test_cogvideox_group_offload_configures_components_separately(monkeypatch):
+    import torch
+    import diffusers.hooks as hooks
+
+    from zigvideo.backends.cogvideox_fp16 import configure_offload
+
+    calls = []
+
+    class FakeModule:
+        def __init__(self, name):
+            self.name = name
+
+        def enable_group_offload(self, **kwargs):
+            calls.append((self.name, kwargs))
+
+    class FakePipeline:
+        def __init__(self):
+            self.transformer = FakeModule("transformer")
+            self.vae = FakeModule("vae")
+            self.text_encoder = FakeModule("text_encoder")
+            self.sequential_called = False
+            self.pipeline_group_called = False
+
+        def enable_sequential_cpu_offload(self, **kwargs):
+            self.sequential_called = True
+
+        def enable_group_offload(self, **kwargs):
+            self.pipeline_group_called = True
+
+    def capture_text_encoder_offload(module, **kwargs):
+        calls.append((module.name, kwargs))
+
+    monkeypatch.setattr(hooks, "apply_group_offloading", capture_text_encoder_offload)
+    pipeline = FakePipeline()
+    configure_offload(pipeline, torch, "group")
+
+    assert not pipeline.sequential_called
+    assert not pipeline.pipeline_group_called
+    assert [name for name, _ in calls] == ["transformer", "vae", "text_encoder"]
+
+    transformer = calls[0][1]
+    assert transformer["onload_device"] == torch.device("cuda")
+    assert transformer["offload_type"] == "block_level"
+    assert transformer["num_blocks_per_group"] == 1
+    assert transformer["use_stream"] is False
+
+    for _, arguments in calls[1:]:
+        assert arguments["offload_type"] == "leaf_level"
+        assert arguments["use_stream"] is False
+
+
+def test_cogvideox_sequential_strategy_does_not_apply_group_hooks():
     import torch
 
     from zigvideo.backends.cogvideox_fp16 import configure_offload
@@ -225,21 +276,13 @@ def test_cogvideox_group_offload_uses_one_block_without_streams():
     class FakePipeline:
         def __init__(self):
             self.sequential_called = False
-            self.group_arguments = None
 
         def enable_sequential_cpu_offload(self, **kwargs):
-            self.sequential_called = True
+            self.sequential_called = kwargs["device"] == "cuda"
 
-        def enable_group_offload(self, **kwargs):
-            self.group_arguments = kwargs
-
-    pipe = FakePipeline()
-    configure_offload(pipe, torch, "group")
-    assert pipe.sequential_called is False
-    assert pipe.group_arguments["onload_device"] == torch.device("cuda")
-    assert pipe.group_arguments["offload_type"] == "block_level"
-    assert pipe.group_arguments["num_blocks_per_group"] == 1
-    assert pipe.group_arguments["use_stream"] is False
+    pipeline = FakePipeline()
+    configure_offload(pipeline, torch, "sequential")
+    assert pipeline.sequential_called
 
 
 def test_cogvideox_invalid_offload_rejected(tmp_path):
