@@ -121,6 +121,40 @@ def cmd_deliver(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_decode(args: argparse.Namespace) -> int:
+    from .decode import decode_saved_latents, inspect_latent_file
+
+    if args.dry_run:
+        print(
+            json.dumps(
+                {
+                    "backend": "cogvideox-vae-only",
+                    "source": inspect_latent_file(args.latents),
+                    "vae_precision": "float32",
+                    "device": "cpu",
+                    "aspect": args.aspect,
+                    "fps": args.fps,
+                    "output": args.output,
+                    "cache_dir": args.cache_dir,
+                    "note": "Does not load the text encoder or transformer, and does not run diffusion.",
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        return 0
+
+    report = decode_saved_latents(
+        input_latents=args.latents,
+        output=args.output,
+        aspect=args.aspect,
+        fps=args.fps,
+        cache_dir=args.cache_dir,
+    )
+    print(json.dumps(report.to_dict(), indent=2, ensure_ascii=False))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="zigvideo",
@@ -222,6 +256,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Motion interpolation creates intermediate frames; duplicate is faster.",
     )
     deliver.set_defaults(func=cmd_deliver)
+
+    decode = sub.add_parser(
+        "decode",
+        help="Decode saved CogVideoX latents using only the FP32 VAE on CPU.",
+    )
+    decode.add_argument(
+        "--latents", required=True, help="Saved .latents.safetensors input."
+    )
+    decode.add_argument(
+        "--output", required=True, help="Destination MP4 file."
+    )
+    decode.add_argument("--fps", type=int, default=8)
+    decode.add_argument("--aspect", choices=["9:16", "16:9"], default="9:16")
+    decode.add_argument(
+        "--cache-dir", default="models/huggingface"
+    )
+    decode.add_argument(
+        "--dry-run", action="store_true", help="Inspect saved latent shape without loading the VAE."
+    )
+    decode.set_defaults(func=cmd_decode)
 
     return parser
 
