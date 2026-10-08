@@ -63,6 +63,12 @@ def cmd_generate(args: argparse.Namespace) -> int:
             generation_preview,
         )
 
+    if args.vae_fp32 and backend != "cogvideox":
+        parser_error = "--vae-fp32 is currently supported only by the CogVideoX backend."
+        raise ValueError(parser_error)
+
+    backend_kwargs = {"vae_fp32": args.vae_fp32} if backend == "cogvideox" else {}
+
     if args.dry_run:
         print(
             json.dumps(
@@ -72,6 +78,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
                     args.output,
                     aspect=args.aspect,
                     num_inference_steps=args.steps,
+                    **backend_kwargs,
                 ),
                 indent=2,
                 ensure_ascii=False,
@@ -87,6 +94,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
         seed=args.seed,
         cache_dir=args.cache_dir,
         num_inference_steps=args.steps,
+        **backend_kwargs,
     )
     print(json.dumps(report.to_dict(), indent=2, ensure_ascii=False))
     return 0
@@ -168,6 +176,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Override diffusion steps for controlled speed/quality experiments.",
+    )
+    generate.add_argument(
+        "--vae-fp32",
+        action="store_true",
+        help="Diagnostic CogVideoX mode: keep transformer FP16, decode VAE in FP32.",
     )
     generate.add_argument("--seed", type=int, default=42)
     generate.add_argument(
