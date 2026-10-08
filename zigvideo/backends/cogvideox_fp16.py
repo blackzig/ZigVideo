@@ -8,6 +8,7 @@ import time
 
 from PIL import Image
 
+from ..benchmark import summarize_stage_timings
 from ..quality import (
     assess_tensor_video,
     classify_numerical_stage,
@@ -61,6 +62,7 @@ class CogVideoXReport:
     vae_precision: str
     offload_strategy: str
     peak_cuda_allocated_gb: float
+    stage_timings: dict
     latent_file: str | None
     latent_checks: list[dict]
     load_seconds: float
@@ -329,12 +331,18 @@ def generate_text_to_video(
     # Inspect VAE output before the diffusers VideoProcessor applies its
     # normalization. Decode into the VAE's own precision (FP16 or FP32).
     raw_vae: dict = {}
+    vae_decode_seconds = 0.0
 
     def monitored_decode_latents(latents):
+        nonlocal vae_decode_seconds
         latents = latents.permute(0, 2, 1, 3, 4)
         latents = latents / pipeline.vae_scaling_factor_image
         latents = latents.to(dtype=pipeline.vae.dtype)
+        torch.cuda.synchronize()
+        vae_started = time.perf_counter()
         video = pipeline.vae.decode(latents).sample
+        torch.cuda.synchronize()
+        vae_decode_seconds = time.perf_counter() - vae_started
         raw_vae.update(summarize_decoded_tensor(video))
         print(
             "[ZigVideo] Raw VAE output: "
@@ -357,11 +365,15 @@ def generate_text_to_video(
     # Only three scalar diagnostics are collected to avoid significantly
     # slowing down low-VRAM diffusion.
     latent_checks: list[dict] = []
+    step_end_elapsed_seconds: list[float] = []
     latent_file: str | None = None
     checkpoints = {0, attempt.num_inference_steps // 2, attempt.num_inference_steps - 1}
 
     def check_latents(_pipeline, step_index, timestep, callback_kwargs):
         nonlocal latent_file
+        # Record a synchronized checkpoint before optional disk writes.
+        torch.cuda.synchronize()
+        step_end_elapsed_seconds.append(time.perf_counter() - inference_started)
         if save_latents and step_index == attempt.num_inference_steps - 1:
             # Capture on the last denoising step; pipeline() then invokes the
             # VAE internally and could raise before it returns.
@@ -399,13 +411,21 @@ def generate_text_to_video(
             callback_on_step_end_tensor_inputs=["latents"],
         )
     inference_seconds = time.perf_counter() - inference_started
+    stage_timings = summarize_stage_timings(
+        step_end_elapsed_seconds,
+        vae_decode_seconds,
+        inference_seconds,
+    )
     peak_cuda_allocated_gb = round(
         torch.cuda.max_memory_allocated() / (1024 ** 3), 3
     )
     print(
-        "[ZigVideo] Inference: "
-        f"{inference_seconds / attempt.num_inference_steps:.2f} s/step; "
-        f"peak CUDA allocated: {peak_cuda_allocated_gb:.2f} GB"
+        "[ZigVideo] Pipeline stages: "
+        f"to-latents={stage_timings['time_to_final_latents_seconds']:.2f}s; "
+        f"steady-step={stage_timings['subsequent_step_mean_seconds']}s; "
+        f"VAE={stage_timings['vae_decode_seconds']:.2f}s; "
+        f"pipeline-total={inference_seconds:.2f}s; "
+        f"peak CUDA allocated={peak_cuda_allocated_gb:.2f}GB"
     )
 
     # Inspect tensors before NumPy/PIL conversion to catch NaN, Inf,
@@ -458,6 +478,7 @@ def generate_text_to_video(
         vae_precision="float32" if vae_fp32 else "float16",
         offload_strategy=offload_strategy,
         peak_cuda_allocated_gb=peak_cuda_allocated_gb,
+        stage_timings=stage_timings,
         latent_file=latent_file,
         latent_checks=latent_checks,
         load_seconds=round(load_seconds, 2),
