@@ -8,7 +8,13 @@ import time
 
 from PIL import Image
 
-from ..quality import assess_tensor_video, classify_numerical_stage, summarize_latents
+from ..quality import (
+    assess_tensor_video,
+    classify_numerical_stage,
+    identify_decode_stage,
+    summarize_decoded_tensor,
+    summarize_latents,
+)
 
 
 MODEL_REPO = "THUDM/CogVideoX-2b"
@@ -50,6 +56,8 @@ class CogVideoXReport:
     native_attempt: dict
     delivery_resolution: str
     quality: dict
+    raw_vae: dict
+    vae_precision: str
     latent_checks: list[dict]
     load_seconds: float
     inference_seconds: float
@@ -69,6 +77,7 @@ def generation_preview(
     output: str | Path,
     aspect: str = "9:16",
     num_inference_steps: int | None = None,
+    vae_fp32: bool = False,
 ) -> dict:
     if preset not in PRESETS:
         raise ValueError(f"Unknown preset: {preset}")
@@ -85,6 +94,7 @@ def generation_preview(
         "backend": "cogvideox-fp16",
         "model_repo": MODEL_REPO,
         "precision": "float16",
+        "vae_precision": "float32" if vae_fp32 else "float16",
         "offload": "sequential CPU offload",
         "vae_tiling": True,
         "native_generation": asdict(attempt),
@@ -145,7 +155,7 @@ def reframe_frames(frames: list[Image.Image], aspect: str) -> list[Image.Image]:
     return reframed
 
 
-def _load_pipeline(cache_dir: Path):
+def _load_pipeline(cache_dir: Path, vae_fp32: bool = False):
     import torch
     from diffusers import CogVideoXPipeline
 
@@ -158,6 +168,12 @@ def _load_pipeline(cache_dir: Path):
         cache_dir=str(cache_dir),
         low_cpu_mem_usage=True,
     )
+
+    # Important: upcast before installing Accelerate's meta-device hooks.
+    # The transformer and text encoder remain in native FP16.
+    if vae_fp32:
+        print("[ZigVideo] Upcasting VAE weights to FP32 before offload...")
+        pipeline.vae.to(dtype=torch.float32)
 
     print("[ZigVideo] Enabling sequential CPU offload and VAE tiling...")
     pipeline.enable_sequential_cpu_offload(device="cuda")
@@ -177,6 +193,7 @@ def generate_text_to_video(
     seed: int = 42,
     cache_dir: str | Path = "models/huggingface",
     num_inference_steps: int | None = None,
+    vae_fp32: bool = False,
 ) -> CogVideoXReport:
     import torch
     from diffusers.utils import export_to_video
@@ -203,8 +220,27 @@ def generate_text_to_video(
 
     total_started = time.perf_counter()
     load_started = time.perf_counter()
-    pipeline = _load_pipeline(cache_dir)
+    pipeline = _load_pipeline(cache_dir, vae_fp32=vae_fp32)
     load_seconds = time.perf_counter() - load_started
+
+    # Inspect VAE output before the diffusers VideoProcessor applies its
+    # normalization. Decode into the VAE's own precision (FP16 or FP32).
+    raw_vae: dict = {}
+
+    def monitored_decode_latents(latents):
+        latents = latents.permute(0, 2, 1, 3, 4)
+        latents = latents / pipeline.vae_scaling_factor_image
+        latents = latents.to(dtype=pipeline.vae.dtype)
+        video = pipeline.vae.decode(latents).sample
+        raw_vae.update(summarize_decoded_tensor(video))
+        print(
+            "[ZigVideo] Raw VAE output: "
+            f"nonfinite={raw_vae['nonfinite_fraction']:.6%}, "
+            f"dtype={raw_vae['dtype']}"
+        )
+        return video
+
+    pipeline.decode_latents = monitored_decode_latents
 
     _cleanup_cuda(torch)
     generator = torch.Generator(device="cpu").manual_seed(seed)
@@ -256,6 +292,7 @@ def generate_text_to_video(
     # and near-black output that would otherwise be silently exported.
     frames, quality = assess_tensor_video(result.frames[0])
     quality["numerical_stage"] = classify_numerical_stage(latent_checks, quality)
+    quality["decode_stage"] = identify_decode_stage(latent_checks, raw_vae, quality)
     print(
         "[ZigVideo] Quality preflight: "
         f"status={quality['status']}, "
@@ -297,6 +334,8 @@ def generate_text_to_video(
         native_attempt=asdict(attempt),
         delivery_resolution=f"{frames[0].width}x{frames[0].height}",
         quality=quality,
+        raw_vae=raw_vae,
+        vae_precision="float32" if vae_fp32 else "float16",
         latent_checks=latent_checks,
         load_seconds=round(load_seconds, 2),
         inference_seconds=round(inference_seconds, 2),
