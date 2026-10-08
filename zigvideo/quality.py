@@ -56,3 +56,54 @@ def assess_tensor_video(video: Any) -> tuple[list[Image.Image], dict]:
         ),
     }
     return [Image.fromarray(frame) for frame in pixels], metrics
+
+
+
+def summarize_latents(latents: Any, step: int) -> dict:
+    """Record latent numerical health at an inference step.
+
+    Intended to run at a few selected steps, not on every denoising step.
+    Copies only scalar summary data back to the CPU.
+    """
+    import torch
+
+    tensor = latents.detach()
+    if tensor.numel() == 0:
+        raise ValueError("Cannot inspect an empty latent tensor")
+
+    finite = torch.isfinite(tensor)
+    fraction = 1.0 - finite.count_nonzero().item() / tensor.numel()
+    finite_values = tensor[finite]
+    if finite_values.numel():
+        minimum = float(finite_values.min().float().item())
+        maximum = float(finite_values.max().float().item())
+        mean_abs = float(finite_values.float().abs().mean().item())
+    else:
+        minimum = None
+        maximum = None
+        mean_abs = None
+
+    return {
+        "step": int(step),
+        "dtype": str(tensor.dtype),
+        "shape": list(tensor.shape),
+        "nonfinite_fraction": round(float(fraction), 8),
+        "finite_min": minimum,
+        "finite_max": maximum,
+        "finite_mean_abs": mean_abs,
+    }
+
+
+def classify_numerical_stage(latent_checks: list[dict], frame_quality: dict) -> str:
+    """Locate the first observed non-finite stage, without guessing its cause."""
+    if any(row["nonfinite_fraction"] > 0 for row in latent_checks):
+        return "nonfinite_observed_during_denoising"
+
+    frame_nonfinite = frame_quality.get("nonfinite_fraction", 0) > 0
+    if frame_nonfinite and latent_checks:
+        return "latents_finite_at_sampled_steps_but_postdecode_nonfinite"
+
+    if frame_nonfinite:
+        return "postdecode_nonfinite_latent_stage_not_checked"
+
+    return "no_nonfinite_detected_in_sampled_stages"
