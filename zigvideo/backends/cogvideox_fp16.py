@@ -10,6 +10,7 @@ import time
 from PIL import Image
 
 from ..benchmark import summarize_stage_timings
+from ..scene_profiles import DEFAULT_NEGATIVE_PROMPT, SCENE_PROFILES
 from ..selective_cfg import (
     cfg_step_batch_factors,
     selective_cfg_transformer,
@@ -62,6 +63,9 @@ class CogVideoXLatentReport:
     backend: str
     preset: str
     seed: int
+    prompt: str
+    negative_prompt: str
+    scene_profile: str | None
     native_attempt: dict
     offload_strategy: str
     cfg_transformer_batch_factor: int
@@ -96,6 +100,9 @@ class CogVideoXReport:
     preset: str
     aspect: str
     seed: int
+    prompt: str
+    negative_prompt: str
+    scene_profile: str | None
     native_attempt: dict
     delivery_resolution: str
     quality: dict
@@ -134,9 +141,14 @@ def generation_preview(
     cfg_guided_steps: int | None = None,
     cfg_guided_start: int = 0,
     experimental_cfg_video: bool = False,
+    prompt: str | None = None,
+    negative_prompt: str | None = None,
+    scene_profile: str | None = None,
 ) -> dict:
     if preset not in PRESETS:
         raise ValueError(f"Unknown preset: {preset}")
+    if scene_profile is not None and scene_profile not in SCENE_PROFILES:
+        raise ValueError(f"Unknown scene profile: {scene_profile}")
     if aspect not in SUPPORTED_ASPECTS:
         raise ValueError(f"Unsupported aspect ratio: {aspect}")
 
@@ -164,6 +176,14 @@ def generation_preview(
     return {
         "backend": "cogvideox-fp16",
         "model_repo": MODEL_REPO,
+        "prompt": prompt,
+        "negative_prompt": (
+            DEFAULT_NEGATIVE_PROMPT if negative_prompt is None else negative_prompt
+        ),
+        "scene_profile": scene_profile,
+        "scene_quality_goal": (
+            SCENE_PROFILES[scene_profile].goal if scene_profile else None
+        ),
         "precision": "float16",
         "vae_precision": "float32" if vae_fp32 else "float16",
         "save_latents": save_latents,
@@ -352,6 +372,9 @@ def save_final_latents(
     seed: int,
     cfg_guided_steps: int | None = None,
     cfg_guided_start: int = 0,
+    prompt: str | None = None,
+    negative_prompt: str | None = None,
+    scene_profile: str | None = None,
 ) -> str:
     """Persist small final latent tensor before VAE decoding can fail."""
     from safetensors.torch import save_file
@@ -369,6 +392,12 @@ def save_final_latents(
         "seed": str(seed),
         "note": "Final CogVideoX denoising latents; not decoded video frames.",
     }
+    if prompt is not None:
+        metadata["prompt"] = prompt
+    if negative_prompt is not None:
+        metadata["negative_prompt"] = negative_prompt
+    if scene_profile is not None:
+        metadata["scene_profile"] = scene_profile
     if cfg_guided_steps is not None:
         metadata["cfg_guided_steps"] = str(cfg_guided_steps)
         metadata["cfg_guided_start"] = str(cfg_guided_start)
@@ -396,12 +425,23 @@ def generate_text_to_video(
     cfg_guided_steps: int | None = None,
     cfg_guided_start: int = 0,
     experimental_cfg_video: bool = False,
+    negative_prompt: str | None = None,
+    scene_profile: str | None = None,
 ) -> CogVideoXReport | CogVideoXLatentReport:
     import torch
     from diffusers.utils import export_to_video
 
+    if not prompt or not prompt.strip():
+        raise ValueError("CogVideoX generation needs a nonempty prompt.")
+    if negative_prompt is None:
+        negative_prompt = DEFAULT_NEGATIVE_PROMPT
+    if not negative_prompt.strip():
+        raise ValueError("CogVideoX negative prompt must not be blank.")
+
     if preset not in PRESETS:
         raise ValueError(f"Unknown preset: {preset}")
+    if scene_profile is not None and scene_profile not in SCENE_PROFILES:
+        raise ValueError(f"Unknown scene profile: {scene_profile}")
     if aspect not in SUPPORTED_ASPECTS:
         raise ValueError(f"Unsupported aspect ratio: {aspect}")
     if not torch.cuda.is_available():
@@ -499,6 +539,9 @@ def generate_text_to_video(
                 callback_kwargs["latents"], output, attempt, seed,
                 cfg_guided_steps=cfg_guided_steps,
                 cfg_guided_start=cfg_guided_start,
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                scene_profile=scene_profile,
             )
         if step_index in checkpoints:
             metrics = summarize_latents(callback_kwargs["latents"], step_index + 1)
@@ -525,10 +568,7 @@ def generate_text_to_video(
     with torch.inference_mode(), cfg_context as cfg_stats:
         result = pipeline(
             prompt=prompt,
-            negative_prompt=(
-                "blurry, distorted, deformed, abstract, unrecognizable subject, "
-                "low quality, inconsistent motion"
-            ),
+            negative_prompt=negative_prompt,
             width=attempt.width,
             height=attempt.height,
             num_frames=attempt.num_frames,
@@ -564,6 +604,9 @@ def generate_text_to_video(
             result.frames, output, attempt, seed,
             cfg_guided_steps=cfg_guided_steps,
             cfg_guided_start=cfg_guided_start,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            scene_profile=scene_profile,
         )
         del result
         _cleanup_cuda(torch)
@@ -575,6 +618,9 @@ def generate_text_to_video(
             backend="cogvideox-fp16-latents-only",
             preset=preset,
             seed=seed,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            scene_profile=scene_profile,
             native_attempt=asdict(attempt),
             offload_strategy=offload_strategy,
             cfg_transformer_batch_factor=transformer_cfg_batch_factor(attempt.guidance_scale),
@@ -642,6 +688,9 @@ def generate_text_to_video(
         preset=preset,
         aspect=aspect,
         seed=seed,
+        prompt=prompt,
+        negative_prompt=negative_prompt,
+        scene_profile=scene_profile,
         native_attempt=asdict(attempt),
         delivery_resolution=f"{frames[0].width}x{frames[0].height}",
         quality=quality,
