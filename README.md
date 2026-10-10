@@ -1138,3 +1138,56 @@ visible across the 16 frames; alternate foot placement is clear
 rather than foot sliding; VAE FP32 decoded result has no sampled
 nonfinite values; any failed criterion is recorded, not hidden
 by postprocessing.
+
+
+### Result: robot-walk full CFG6 / 30-step quality test (2026-10-10)
+
+**Executed and user-verified.** The first `--scene-profile robot-walk`
+generation (after 107/107 local unit tests passed) used
+CogVideoX-2B FP16, 720×480 native, 16 frames at 8 FPS,
+seed=42, sequential CPU offload, and **full CFG=6** in all
+30 denoising steps. It used `--latents-only`, preserving
+the exact positive/negative prompt, `scene_profile=robot-walk`
+and CFG metadata for comparison.
+
+- 30/30 steps finished; `cfg_schedule=null` (no selective CFG).
+- Latent checkpoints 1, 16 and 30 sampled **0% nonfinite**.
+  Native latent shape: [1, 4, 16, 60, 90].
+- Loading **112.38 s**; inference **2321.63 s**; complete
+  generation **2434.69 s (40m 34.69s)**. Mean subsequent
+  denoising step **76.061 s**; peak CUDA allocation **0.763 GB**
+  (this was latent-only, excluding video/VAE generation).
+- The saved latents were independently decoded with CogVideoX
+  FP32 VAE on **CPU**, `--aspect 9:16 --focus-x 0.50 --fps 8`
+  to `outputs/robot-fullbody-walk-fp32.mp4`.
+  CPU VAE **372.21 s**, decode total **376.63 s (6m 16.63s)**.
+  Combined generation + decode **2811.32 s (46m 51.32s)**.
+- FP32 raw VAE sampling: **0.0% nonfinite**, sample mean
+  **-0.69675076**, sample fraction below -1 **0.012399**;
+  output preflight `plausible`, final 360×640, **16 frames /
+  2 seconds**. Numerically plausible does not imply motion
+  quality or realistic physics.
+
+**Human visual inspection of the actual uploaded 16-frame MP4**
+(8-frame and 16-frame contact sheets): one clearly recognizable
+humanoid robot, **fully visible from head to both feet**, within
+the vertical frame and approximately centered. No vehicle obscures
+the subject. The blue-neon wet paving is relatively uncluttered.
+Foot and arm positions vary over the sequence, including some
+leg alternation toward the latter frames, but the walk remains
+**somewhat stiff** and an extended natural gait is **not yet
+established** in the very short 2-second output.
+
+**Interpretation:** this is a successful composition experiment,
+not proof that increasing steps/frames or selective CFG will improve
+walking naturally. In particular, a different prompt was used
+from the older selective-CFG experiment, so its visual superiority
+**must not** be attributed solely to full CFG=6.
+
+**Next priority:** retain the profile and all generation defaults,
+do not rerun expensive 30-step tests for speed alone. Plan a
+measured, opt-in **temporal-duration and motion** experiment
+separately, with explicit memory/time expectations and comparison
+criteria. Delivering at 24 FPS interpolates existing source
+frames and cannot invent missing gait or extend the 2-second
+narrative. The saved current MP4 is a useful reference.
