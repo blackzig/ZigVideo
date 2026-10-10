@@ -943,3 +943,71 @@ substantial RAM; it does not run the transformer. Compare the
 wider MP4 (and raw VAE nonfinite diagnostic JSON) with the
 existing vertical export before changing the video crop
 or diffusion schedule.
+
+
+### VAE FP32 and portrait subject positioning: confirmed diagnosis (2026-10-10)
+
+The **previously saved** 30-step selective-CFG latents
+(`cfg-mid-30steps-quality.latents.safetensors`) were successfully
+re-decoded using `zigvideo decode --device cpu --aspect 16:9`:
+
+- FP32 VAE **0% sampled nonfinite**; preflight quality status
+  `plausible`, 16 frames @ 8 FPS, 640×360 exported.
+- FP32 CPU VAE time **339.93 seconds**; total **342.47 seconds**.
+  The prior FP16 VAE in video generation took 192.23 s but had
+  **18.333333% sampled nonfinite** outputs. These modes differ in
+  both precision *and* device, so do not ascribe the whole
+  runtime difference to FP32 alone.
+- Visual inspection of the wide FP32 MP4 confirmed a recognizable
+  gray/white robot with glowing eyes on the **right-hand side**
+  of the native scene, with a large vehicle dominating the
+  background. The original *center* 9:16 crop omitted much of
+  this right-positioned subject. The robot moves its head/body
+  but does **not** demonstrate a clear full-body walk; its lower
+  legs are cut off by the scene framing.
+- This corrects the preliminary interpretation: CFG selective
+  20/30 **does produce a recognizable robot**, but composition
+  and requested walking motion remain poorer than the prior
+  full CFG=6 baseline.
+
+A diagnostic 9:16 crop of the existing **wide** FP32 MP4,
+shifted right, confirms that the robot can be centered **without
+regenerating the video**. This diagnostic crop was made from the
+640×360 horizontal file and therefore cannot restore vertical
+pixels already removed by the wide aspect export.
+
+**New opt-in feature**: `zigvideo decode --focus-x 0.70`.
+This crops **directly from the native 720×480 VAE output** when
+`--aspect 9:16`, rather than using the intermediate 16:9 file.
+The normalized horizontal subject position is 0 (left edge),
+0.5 (original center; default), 1 (right edge). With focus=0.70,
+the native portrait window is approximately x=369..639
+instead of the old center x=225..495. The value is
+clamped to the source bounds and recorded in the new decode
+JSON `focus_x` field. Values outside 0..1, NaN and Inf
+are rejected. Non-default focus with `--aspect 16:9` is rejected.
+
+**Validation workflow (no new diffusion):**
+
+```powershell
+git pull
+.\.venv\Scripts\python.exe -m pytest -v
+
+.\.venv\Scripts\zigvideo.exe decode `
+  --latents outputs\cfg-mid-30steps-quality.latents.safetensors `
+  --device cpu `
+  --aspect 9:16 `
+  --focus-x 0.70 `
+  --fps 8 `
+  --output outputs\cfg-mid-30steps-vertical-focus70-fp32.mp4 `
+  --dry-run
+```
+
+The tests and dry run should be checked before removing
+`--dry-run`; the FP32 CPU VAE will again take several minutes.
+This is optional since a cropped FP32 diagnostic MP4 already
+shows the robot centered, but it may retain **more vertical
+content** than cropping the horizontal MP4. Do not claim
+full-body walking without visual verification. The full
+CFG=6 generation baseline and all generation defaults are
+unchanged.
