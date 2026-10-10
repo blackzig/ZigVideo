@@ -696,3 +696,79 @@ Do not launch a 30-step selective-CFG quality job before this check.
 
 The previously validated baseline remains 30 steps, CFG=6,
 sequential offload; do not change the default automatically.
+
+
+### Selective CFG: real GTX 1660 SUPER proof and middle-window option (2026-10-10)
+
+The 2-step **CFG 6 on first step / conditional-only on second**
+experiment completed on the user's GTX 1660 SUPER 6 GB, with
+Diffusers 0.40 and sequential CPU offload.
+
+| Two-step latent-only experiment | CFG 1 always | CFG 6 always | CFG 6 then conditional-only |
+|---|---:|---:|---:|
+| Guidance transformer batch pattern | [1, 1] | [2, 2] | **[2, 1]** |
+| Second denoising step | 38.186 s | 75.293 s | **37.401 s** |
+| Full pipeline inference, including first step | 119.959 s | 192.537 s | **153.135 s** |
+| Peak CUDA allocation | 0.509 GB | 0.763 GB | 0.757 GB |
+
+The selective hook recorded **2 transformer calls**, one normal
+guided call and one conditional-only call, with actual batch factors
+**[2, 1]**. Both latent checkpoints reported **0% nonfinite**.
+The measured second-step time is **50.3% lower** than always-guided
+CFG 6 in these separate runs; total diffusion time is about
+**20.5% lower**. This verifies the computational mechanism,
+**not visual quality**. The unchanged peak CUDA usage across
+the selective and full-CFG runs reflects the first guided step.
+
+**Next research hypothesis — middle window:** studies of
+stage-wise CFG schedules in *image diffusion*, including
+[Jin, Shi & Gu, ICLR 2026](https://proceedings.iclr.cc/paper_files/paper/2026/hash/f9e2800a251fa9107a008104f47c45d1-Abstract-Conference.html),
+suggest that the timing of strong guidance affects quality and
+diversity. This does **not** prove the best CogVideoX video schedule.
+Rather than assuming that CFG belongs only at the beginning, we
+now allow a guided interval anywhere.
+
+With the added `--cfg-guided-start S` (zero-based), the
+`--cfg-guided-steps N` option guides indices **[S, S+N)**,
+and all other indices use the faster conditional-only transformer.
+Default `--cfg-guided-start 0` preserves the already-tested
+guided-prefix behavior. The saved safetensors metadata now records
+`cfg_schedule=selective_window`, `cfg_guided_start` and
+`cfg_guided_steps`.
+
+**Do not run a 30-step quality test yet.** First verify that
+the real model can move from conditional-only, to CFG, and
+back to conditional-only. This is a three-step **latents-only**
+smoke test, pattern **[1, 2, 1]**:
+
+```powershell
+git pull
+.\.venv\Scripts\python.exe -m pytest -v
+
+.\.venv\Scripts\zigvideo.exe generate `
+  --backend cogvideox `
+  --prompt "A small friendly robot clearly visible in the center of the frame, full body, walking slowly through a rainy futuristic city street at night, detailed metallic body, neon reflections on wet pavement, cinematic lighting, realistic scene" `
+  --preset ultra-safe `
+  --aspect 9:16 `
+  --steps 3 `
+  --seed 42 `
+  --offload sequential `
+  --cfg-scale 6 `
+  --cfg-guided-start 1 `
+  --cfg-guided-steps 1 `
+  --latents-only `
+  --output outputs\cfg-mid-1of3.mp4 `
+  --dry-run
+```
+
+If and only if the tests and dry run pass, remove only
+`--dry-run` to measure a three-step smoke test. No VAE and
+no MP4 are produced. Expect `actual_transformer_batch_factors`
+to equal **[1, 2, 1]**. The second step may run close to the
+CFG 6 baseline, while the third should approach the CFG 1
+baseline; neither is guaranteed by unit tests. Do not yet infer
+image quality from these intermediate latents.
+
+Guidance is still restricted to `--latents-only` and
+`--offload sequential`, so regular MP4 generation and the
+quality reference remain untouched.
