@@ -128,3 +128,20 @@ def test_decode_dry_run_checks_saved_file_without_loading_models(tmp_path, capsy
     assert report["offload_strategy"] == (
         "leaf_level" if device == "cuda" else "none"
     )
+
+
+
+def test_gpu_allocator_peak_flag_exceeds_device_capacity():
+    from zigvideo.decode import peak_allocation_exceeds_device_memory
+
+    assert peak_allocation_exceeds_device_memory(10.574, 6.0) is True
+    assert peak_allocation_exceeds_device_memory(3.8, 6.0) is False
+
+
+def test_gpu_allocator_peak_flag_cpu_and_invalid_capacity():
+    from zigvideo.decode import peak_allocation_exceeds_device_memory
+
+    assert peak_allocation_exceeds_device_memory(None, None) is None
+    assert peak_allocation_exceeds_device_memory(3.8, None) is None
+    with pytest.raises(ValueError, match="Invalid GPU"):
+        peak_allocation_exceeds_device_memory(1.0, 0.0)
