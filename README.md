@@ -577,3 +577,49 @@ VAE never runs.
 
 Relevant pinned Diffusers implementation:
 https://github.com/huggingface/diffusers/blob/v0.40.0/src/diffusers/pipelines/cogvideo/pipeline_cogvideox.py
+
+
+### Visual quality verdict: 30 steps, CFG 1 versus CFG 6 (2026-10-10)
+
+A complete 30-step CogVideoX FP16 run was completed using the **same
+original robot prompt and seed 42**, 720x480 native resolution, 16 frames
+at 8 fps, sequential CPU offload, and 9:16 output. The only
+intentional guidance change was **CFG 1 instead of CFG 6**.
+
+| Metric | CFG 1 (new) | CFG 6 (earlier baseline) |
+|---|---:|---:|
+| Inference steps | 30 | 30 |
+| CFG transformer batch factor | 1 | 2 |
+| Measured steady step | 37.246 s | about 75-79 s (baseline) |
+| Total wall-clock generation | **1433.62 s** (23m 53s) | **2593.89 s** (43m 14s) |
+| Time difference | 1160.27 s saved (~44.7%) | reference |
+| Prompt fidelity | **Poor**: robot not clearly identifiable | **Much better**: recognizable walking metal robot |
+| Visual quality | Unacceptable as final output | Recognizable subject, but underlit |
+
+Visual examination of the saved MP4s:
+- `cfg1-30steps.mp4`: visually busy street-like forms with no clearly
+  recognizable foreground robot. The image is generally brighter, but
+  brightness **is not** prompt adherence.
+- `cogvideo-shorts-test.mp4` (original CFG 6, 30 steps): a clearly
+  identifiable silver robot walking against a very dark urban
+  background; still requires quality/lighting improvements.
+
+The CFG 1 raw FP16 VAE output had **18.333333% sampled nonfinite
+values** despite finite denoising latents at steps 1, 16, and 30.
+Those values were sanitized for export, so a successful MP4 is
+**not** a clean numeric pass. Stage timings: 1152.21 s to last
+latents, 177.59 s VAE, 1433.62 s total; peak CUDA allocated
+4.028 GB.
+
+**Decision:** do **not** switch the default to CFG 1. The near-halving
+of transformer time comes with unacceptable prompt fidelity for this
+scene. Keep **30 steps / CFG 6 / sequential offload** as the quality
+reference, while acknowledging that it is slow and still too dark.
+CFG 1 remains an opt-in diagnostic only. Two-step latent-only runs
+establish throughput but **do not** establish image quality.
+
+Further work should prioritize optimizations which preserve guidance,
+or alternate backends / guided scheduling only if accompanied by a
+new falsifiable hypothesis and *real* quality validation. Do not run
+another 30-step job based solely on predicted speed, and do not
+present faster-but-unrecognizable clips as a product improvement.
