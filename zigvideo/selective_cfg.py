@@ -22,14 +22,23 @@ def validate_selective_cfg(
     guidance_scale: float,
     latents_only: bool,
     offload_strategy: str,
+    guided_start: int = 0,
 ) -> None:
+    if not isinstance(guided_start, int) or isinstance(guided_start, bool):
+        raise ValueError("--cfg-guided-start must be an integer.")
     if guided_steps is None:
+        if guided_start != 0:
+            raise ValueError("--cfg-guided-start requires --cfg-guided-steps.")
         return
     if not isinstance(guided_steps, int) or isinstance(guided_steps, bool):
         raise ValueError("--cfg-guided-steps must be an integer.")
     if not 0 <= guided_steps <= total_steps:
         raise ValueError(
             "--cfg-guided-steps must be between 0 and --steps (inclusive)."
+        )
+    if guided_start < 0 or guided_start + guided_steps > total_steps:
+        raise ValueError(
+            "--cfg-guided-start and --cfg-guided-steps must fit within --steps."
         )
     if guidance_scale <= 1.0:
         raise ValueError("Selective CFG requires a baseline --cfg-scale > 1.")
@@ -43,10 +52,22 @@ def validate_selective_cfg(
         )
 
 
+
+def cfg_step_batch_factors(
+    total_steps: int, guided_steps: int, guided_start: int = 0
+) -> list[int]:
+    """Expected transformer batch factor per step for a guided window."""
+    return [
+        2 if guided_start <= i < guided_start + guided_steps else 1
+        for i in range(total_steps)
+    ]
+
+
 @dataclass
 class SelectiveCFGStats:
     requested_guided_steps: int
     total_steps: int
+    requested_guided_start: int = 0
     calls_seen: int = 0
     guided_calls: int = 0
     conditional_only_calls: int = 0
@@ -55,6 +76,11 @@ class SelectiveCFGStats:
     def to_dict(self) -> dict:
         return {
             "requested_guided_steps": self.requested_guided_steps,
+            "requested_guided_start": self.requested_guided_start,
+            "guided_step_window": [
+                self.requested_guided_start,
+                self.requested_guided_start + self.requested_guided_steps,
+            ],
             "total_steps": self.total_steps,
             "calls_seen": self.calls_seen,
             "guided_calls": self.guided_calls,
@@ -63,23 +89,26 @@ class SelectiveCFGStats:
                 self.actual_transformer_batch_factors
             ),
             "note": (
-                "First N steps use ordinary CFG. Later steps run the "
-                "conditional transformer half only, and duplicate its "
-                "prediction for compatibility with the upstream CFG math. "
+                "Only steps inside the requested zero-based half-open window "
+                "use ordinary CFG. All other steps run the conditional "
+                "transformer half only, and duplicate its prediction for "
+                "compatibility with the upstream CFG math. "
                 "Not a quality-validated mode."
             ),
         }
 
 
 @contextmanager
-def selective_cfg_transformer(transformer, *, guided_steps: int, total_steps: int):
+def selective_cfg_transformer(
+    transformer, *, guided_steps: int, total_steps: int, guided_start: int = 0
+):
     """Temporarily install call hooks; restore even on pipeline failure.
 
     This assumes a single transformer call per denoising step, as in pinned
     diffusers CogVideoXPipeline 0.40.0. The hooks run at the module boundary,
     outside Accelerate's wrapped forward, so sequential hooks remain intact.
     """
-    stats = SelectiveCFGStats(guided_steps, total_steps)
+    stats = SelectiveCFGStats(guided_steps, total_steps, guided_start)
     pending_conditional = False
 
     def prehook(_module, args, kwargs):
@@ -88,7 +117,9 @@ def selective_cfg_transformer(transformer, *, guided_steps: int, total_steps: in
             raise RuntimeError(
                 "Selective CFG expected one transformer call per denoising step."
             )
-        pending_conditional = stats.calls_seen >= guided_steps
+        pending_conditional = not (
+            guided_start <= stats.calls_seen < guided_start + guided_steps
+        )
         stats.calls_seen += 1
         stats.actual_transformer_batch_factors.append(
             1 if pending_conditional else 2
