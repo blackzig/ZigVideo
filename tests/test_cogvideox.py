@@ -317,3 +317,112 @@ def test_save_final_latents_before_decode(tmp_path):
         assert file.get_slice("latents").get_shape() == [1, 4, 16, 60, 90]
         assert file.metadata()["steps"] == "1"
         assert file.metadata()["seed"] == "42"
+
+
+
+def test_cfg_batch_factor_matches_diffusers_guidance_branch():
+    from zigvideo.backends.cogvideox_fp16 import transformer_cfg_batch_factor
+
+    assert transformer_cfg_batch_factor(6.0) == 2
+    assert transformer_cfg_batch_factor(1.01) == 2
+    assert transformer_cfg_batch_factor(1.0) == 1
+
+
+def test_cfg_scale_rejects_invalid_values():
+    import pytest
+
+    from zigvideo.backends.cogvideox_fp16 import transformer_cfg_batch_factor
+
+    for invalid in [0.0, 31.0, float("nan")]:
+        with pytest.raises(ValueError, match="CFG scale"):
+            transformer_cfg_batch_factor(invalid)
+
+
+def test_latents_only_preview_disables_vae_and_preserves_default_cfg(tmp_path):
+    preview = generation_preview(
+        preset="ultra-safe",
+        cache_dir=tmp_path / "models",
+        output=tmp_path / "benchmark.mp4",
+        num_inference_steps=2,
+        latents_only=True,
+    )
+    assert preview["save_latents"] is True
+    assert preview["latents_only"] is True
+    assert preview["output_mode"] == "latents_no_vae_or_mp4"
+    assert preview["cfg_transformer_batch_factor"] == 2
+    assert preview["native_generation"]["guidance_scale"] == 6.0
+    assert preview["native_generation"]["num_inference_steps"] == 2
+
+
+def test_latents_only_cfg_one_has_half_guidance_batch(tmp_path):
+    preview = generation_preview(
+        preset="ultra-safe",
+        cache_dir=tmp_path / "models",
+        output=tmp_path / "cfg1.mp4",
+        cfg_scale=1.0,
+        latents_only=True,
+    )
+    assert preview["cfg_transformer_batch_factor"] == 1
+    assert preview["native_generation"]["guidance_scale"] == 1.0
+
+
+def test_latents_only_rejects_unused_vae_fp32(tmp_path):
+    import pytest
+
+    with pytest.raises(ValueError, match="has no effect"):
+        generation_preview(
+            preset="ultra-safe",
+            cache_dir=tmp_path / "models",
+            output=tmp_path / "invalid.mp4",
+            latents_only=True,
+            vae_fp32=True,
+        )
+
+
+def test_diffusers_cogvideox_can_return_latents_without_vae_decode():
+    import inspect
+    from diffusers import CogVideoXPipeline
+
+    pipeline_source = inspect.getsource(CogVideoXPipeline.__call__)
+    assert 'if not output_type == "latent":' in pipeline_source
+    assert "video = latents" in pipeline_source
+
+
+def test_cli_generation_benchmark_flags_and_defaults(tmp_path, capsys):
+    import json
+
+    from zigvideo.cli import build_parser
+
+    parser = build_parser()
+    args = [
+        "generate",
+        "--backend", "cogvideox",
+        "--prompt", "a robot",
+        "--output", str(tmp_path / "cfg1.mp4"),
+        "--latents-only",
+        "--cfg-scale", "1",
+        "--steps", "2",
+        "--dry-run",
+    ]
+    assert parser.parse_args(args).func(parser.parse_args(args)) == 0
+    preview = json.loads(capsys.readouterr().out.split("\n", 1)[1])
+    assert preview["output_mode"] == "latents_no_vae_or_mp4"
+    assert preview["cfg_transformer_batch_factor"] == 1
+    assert preview["native_generation"]["num_inference_steps"] == 2
+
+
+def test_latents_file_metadata_includes_cfg_scale(tmp_path):
+    import torch
+    from safetensors import safe_open
+
+    from zigvideo.backends.cogvideox_fp16 import CogVideoXAttempt, save_final_latents
+
+    output = tmp_path / "cfg-benchmark.mp4"
+    attempt = CogVideoXAttempt(720, 480, 16, 8, 2, guidance_scale=1.0)
+    path = save_final_latents(
+        torch.zeros((1, 4, 16, 60, 90), dtype=torch.float16),
+        output, attempt, seed=42,
+    )
+    with safe_open(path, framework="pt", device="cpu") as file:
+        assert file.metadata()["guidance_scale"] == "1.0"
+        assert file.metadata()["steps"] == "2"
