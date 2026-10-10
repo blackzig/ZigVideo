@@ -63,10 +63,16 @@ def cmd_generate(args: argparse.Namespace) -> int:
             generation_preview,
         )
 
-    if (args.vae_fp32 or args.save_latents or args.offload != "sequential") and backend != "cogvideox":
+    if (
+        args.vae_fp32
+        or args.save_latents
+        or args.latents_only
+        or args.cfg_scale is not None
+        or args.offload != "sequential"
+    ) and backend != "cogvideox":
         raise ValueError(
-            "--vae-fp32, --save-latents and group offloading "
-            "are currently supported only by the CogVideoX backend."
+            "--vae-fp32, --save-latents, --latents-only, --cfg-scale "
+            "and group offloading require the CogVideoX backend."
         )
 
     backend_kwargs = (
@@ -74,6 +80,8 @@ def cmd_generate(args: argparse.Namespace) -> int:
             "vae_fp32": args.vae_fp32,
             "save_latents": args.save_latents,
             "offload_strategy": args.offload,
+            "latents_only": args.latents_only,
+            "cfg_scale": args.cfg_scale,
         }
         if backend == "cogvideox"
         else {}
@@ -230,6 +238,23 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "CogVideoX CPU/GPU transfer strategy. 'group' is experimental; "
             "use --steps 1 for an OOM/speed smoke test first."
+        ),
+    )
+    generate.add_argument(
+        "--cfg-scale",
+        type=float,
+        default=None,
+        help=(
+            "Experimental CogVideoX CFG override. Baseline is 6; CFG 1 "
+            "avoids double-batch guidance but may change visual quality."
+        ),
+    )
+    generate.add_argument(
+        "--latents-only",
+        action="store_true",
+        help=(
+            "CogVideoX diffusion-only benchmark: save final .latents.safetensors "
+            "and JSON, skipping VAE decoding and MP4 export."
         ),
     )
     generate.add_argument(
