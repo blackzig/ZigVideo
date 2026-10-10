@@ -80,13 +80,14 @@ def cmd_generate(args: argparse.Namespace) -> int:
         or args.save_latents
         or args.latents_only
         or args.cfg_scale is not None
+        or args.frames is not None
         or args.cfg_guided_steps is not None
         or args.cfg_guided_start != 0
         or args.experimental_cfg_video
         or args.offload != "sequential"
     ) and backend != "cogvideox":
         raise ValueError(
-            "--vae-fp32, --save-latents, --latents-only, --cfg-scale, "
+            "--vae-fp32, --save-latents, --latents-only, --cfg-scale, --frames, "
             "--cfg-guided-steps, --experimental-cfg-video "
             "and group offloading require the CogVideoX backend."
         )
@@ -101,6 +102,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
             "cfg_guided_steps": args.cfg_guided_steps,
             "cfg_guided_start": args.cfg_guided_start,
             "experimental_cfg_video": args.experimental_cfg_video,
+            "num_frames": args.frames,
             "negative_prompt": scene_text.negative_prompt,
             "scene_profile": scene_text.scene_profile,
         }
@@ -268,6 +270,14 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["16:9", "9:16"],
         default="16:9",
         help="Output composition. Use 9:16 for Shorts, Reels and TikTok.",
+    )
+    generate.add_argument(
+        "--frames", type=int, choices=[16, 33, 49], default=None,
+        help=(
+            "CogVideoX-only native frame-count override for controlled "
+            "temporal tests. 33 and 49 frames are unvalidated on a GTX 6GB; "
+            "run with --dry-run before allocating GPU time."
+        ),
     )
     generate.add_argument(
         "--steps",
