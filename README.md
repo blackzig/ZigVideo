@@ -1191,3 +1191,108 @@ separately, with explicit memory/time expectations and comparison
 criteria. Delivering at 24 FPS interpolates existing source
 frames and cannot invent missing gait or extend the 2-second
 narrative. The saved current MP4 is a useful reference.
+
+
+### Next experimental stage: 33 *native* frames with unchanged 30-step CFG6 (2026-10-10)
+
+The previous `robot-walk` quality checkpoint passed the **single,
+fully framed robot** composition objective at 16 frames (8 FPS,
+2 seconds), but the walking cycle was still stiff. To isolate
+temporal length as the only generation variable, a new
+CogVideoX-only `generate --frames` **optional override** accepts
+the model's already configured frame buckets `16`, `33`, `49`.
+It does **not** change any defaults or any preset definitions.
+Previously `--preset safe` selected 33 frames **and 40 steps**;
+now `--preset ultra-safe --frames 33 --steps 30` keeps all
+settings but the number of native frames equal to the successful
+16-frame reference.
+
+**Changes and safeguards:**
+- `--frames 33` selects **33 genuine generated frames at 8 FPS
+  (4.125 seconds)**, not duplicated or interpolated frames.
+- The default stays 16 frames, 30 steps, native 720x480,
+  8 FPS, CFG6 and sequential offload. The `safe` preset
+  still selects 33 frames and 40 steps unless overridden.
+- Unsupported frame counts are rejected before model loading,
+  and `--frames` is rejected for the experimental LTX backend.
+- CogVideoX dry-run now reports `source_duration_seconds`.
+  Explicit long frame overrides include
+  `temporal_experiment` with `quality_validated=false`,
+  `time_validated=false` and a warning that memory and runtime
+  may increase nonlinearly. **Dry-run cannot check actual GPU RAM
+  or render visual quality.** The generated report/latent metadata
+  already saves the true selected number of frames.
+- The 33-frame result is **NOT YET GPU VALIDATED** on the GTX
+  1660 SUPER 6 GB. The previously measured 16-frame latents-only
+  run took **40m34.69s**, and CPU FP32 decode took **6m16.63s**.
+  A simplistic linear extrapolation using 33/16 suggests ~80 min
+  for diffusion alone and ~13 min for FP32 decode, plus load.
+  This is **only a budgeting illustration**, *not* a benchmark:
+  actual cost and peak RAM/VRAM can be significantly different
+  because sequence-length effects are not necessarily linear.
+  Allow well over an hour for a possible later full-length test
+  and be prepared for an OOM, even if the 16-frame test worked.
+
+**Phase A — zero-GPU validation:**
+
+```powershell
+git pull
+.\.venv\Scripts\python.exe -m pytest -v
+
+.\.venv\Scripts\zigvideo.exe generate `
+  --backend cogvideox `
+  --scene-profile robot-walk `
+  --preset ultra-safe `
+  --frames 33 `
+  --aspect 9:16 `
+  --steps 30 `
+  --seed 42 `
+  --offload sequential `
+  --cfg-scale 6 `
+  --latents-only `
+  --output outputs\robot-walk-33frames.mp4 `
+  --dry-run
+```
+
+Check that `native_generation` is 720×480,
+`num_frames=33`, `num_inference_steps=30`, `fps=8`,
+`guidance_scale=6.0`, `source_duration_seconds=4.125`,
+`cfg_schedule=null`, and no VAE is requested. The profile
+prompt/negative prompt should exactly match the 16-frame
+checkpoint.
+
+**Phase B — optional one-step hardware/OOM smoke test
+(only after passing the unit tests and dry-run):**
+
+```powershell
+.\.venv\Scripts\zigvideo.exe generate `
+  --backend cogvideox `
+  --scene-profile robot-walk `
+  --preset ultra-safe `
+  --frames 33 `
+  --aspect 9:16 `
+  --steps 1 `
+  --seed 42 `
+  --offload sequential `
+  --cfg-scale 6 `
+  --latents-only `
+  --output outputs\robot-walk-33frames-smoke.mp4
+```
+
+This must **not** be used for video-quality evaluation, as a
+1-step image is expected to be poor. Check actual peak CUDA
+allocation, true transformer step execution, and errors/OOM,
+before deciding whether to spend roughly an hour or more on
+the full 30-step test. The smoke run is not a guarantee that
+a longer run and VAE decode will succeed. The full 30-step
+command above should only be considered **without --dry-run**
+after the user reviews those data and elects the GPU cost.
+
+**Quality criteria if full test is later authorized:** 33 frames
+from one native generation; robot fully visible in the same
+9:16 crop; recognizable alternating foot placement with no
+abrupt scene changes; stable relative camera/subject framing;
+no sampled nonfinite FP32 VAE output. Compare all 33 frames
+against the established 16-frame full-CFG6 result. Interpolating
+to 24 FPS does not improve the underlying native gait and
+does not extend runtime.
