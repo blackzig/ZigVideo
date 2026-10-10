@@ -69,6 +69,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
         or args.latents_only
         or args.cfg_scale is not None
         or args.cfg_guided_steps is not None
+        or args.cfg_guided_start != 0
         or args.offload != "sequential"
     ) and backend != "cogvideox":
         raise ValueError(
@@ -85,6 +86,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
             "latents_only": args.latents_only,
             "cfg_scale": args.cfg_scale,
             "cfg_guided_steps": args.cfg_guided_steps,
+            "cfg_guided_start": args.cfg_guided_start,
         }
         if backend == "cogvideox"
         else {}
@@ -260,6 +262,16 @@ def build_parser() -> argparse.ArgumentParser:
             "Experimental CogVideoX sequential-only schedule: use normal CFG "
             "for the first N steps and conditional-only transformer computation "
             "thereafter. Requires --latents-only and CFG > 1."
+        ),
+    )
+    generate.add_argument(
+        "--cfg-guided-start",
+        type=int,
+        default=0,
+        help=(
+            "Zero-based starting step for selective CFG (default 0). "
+            "Requires --cfg-guided-steps; together they define a "
+            "guided window instead of always starting at the first step."
         ),
     )
     generate.add_argument(
