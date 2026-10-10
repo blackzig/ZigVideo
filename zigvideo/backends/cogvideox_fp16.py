@@ -28,6 +28,20 @@ from ..quality import (
 MODEL_REPO = "THUDM/CogVideoX-2b"
 SUPPORTED_ASPECTS = ("16:9", "9:16")
 OFFLOAD_STRATEGIES = ("sequential", "group")
+SUPPORTED_FRAME_COUNTS = (16, 33, 49)
+
+
+def validate_frame_override(num_frames: int | None) -> None:
+    """Allow explicit native-frame overrides only in known CogVideoX preset buckets."""
+    if num_frames is None:
+        return
+    if isinstance(num_frames, bool) or not isinstance(num_frames, int) or num_frames not in SUPPORTED_FRAME_COUNTS:
+        raise ValueError(
+            "--frames must be one of 16, 33 or 49 for CogVideoX. "
+            "Longer clips are experimental and may exceed memory or runtime budgets."
+        )
+
+
 
 
 @dataclass(frozen=True)
@@ -133,6 +147,7 @@ def generation_preview(
     output: str | Path,
     aspect: str = "9:16",
     num_inference_steps: int | None = None,
+    num_frames: int | None = None,
     vae_fp32: bool = False,
     save_latents: bool = False,
     offload_strategy: str = "sequential",
@@ -156,6 +171,9 @@ def generation_preview(
         raise ValueError(f"Unsupported offload strategy: {offload_strategy}")
 
     attempt = PRESETS[preset]
+    validate_frame_override(num_frames)
+    if num_frames is not None:
+        attempt = replace(attempt, num_frames=num_frames)
     if num_inference_steps is not None:
         if num_inference_steps < 1:
             raise ValueError("num_inference_steps must be >= 1")
@@ -211,6 +229,23 @@ def generation_preview(
         "offload_strategy": offload_strategy,
         "vae_tiling": True,
         "native_generation": asdict(attempt),
+        "source_duration_seconds": round(attempt.num_frames / attempt.fps, 4),
+        "temporal_experiment": (
+            {
+                "frame_override": num_frames,
+                "previous_tested_frames": 16,
+                "previous_tested_duration_seconds": 2.0,
+                "new_duration_seconds": round(attempt.num_frames / attempt.fps, 4),
+                "quality_validated": False,
+                "time_validated": False,
+                "note": (
+                    "33/49-frame generation is not measured on this 6GB GPU. "
+                    "Denoising time and memory may grow nonlinearly with temporal length. "
+                    "A dry-run never tests memory or quality."
+                ),
+            }
+            if num_frames is not None and num_frames > 16 else None
+        ),
         "aspect": aspect,
         "delivery_resolution": "360x640" if aspect == "9:16" else "640x360",
         "reframe": (
@@ -417,6 +452,7 @@ def generate_text_to_video(
     seed: int = 42,
     cache_dir: str | Path = "models/huggingface",
     num_inference_steps: int | None = None,
+    num_frames: int | None = None,
     vae_fp32: bool = False,
     save_latents: bool = False,
     offload_strategy: str = "sequential",
@@ -457,6 +493,9 @@ def generate_text_to_video(
         raise ValueError(f"Unsupported offload strategy: {offload_strategy}")
 
     attempt = PRESETS[preset]
+    validate_frame_override(num_frames)
+    if num_frames is not None:
+        attempt = replace(attempt, num_frames=num_frames)
     if num_inference_steps is not None:
         if num_inference_steps < 1:
             raise ValueError("num_inference_steps must be >= 1")
