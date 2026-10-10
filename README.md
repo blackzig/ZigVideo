@@ -452,3 +452,43 @@ simply omit `--device cuda` on future decodes. Do **not** repeat
 30-step full generation until this measurement establishes an
 advantage. FP32 VAE decode, even if accelerated, covers only part
 of the full CogVideoX runtime.
+
+
+### Completed CPU-vs-CUDA FP32 VAE comparison (2026-10-10)
+
+**Result: CUDA leaf-level VAE offload is not a performance win on the
+tested GTX 1660 SUPER.** The same saved 8-step latents were decoded in
+FP32 on both devices. Both produced a near-black video, maximum
+2/255, **0% nonfinite output**, `sample_mean=-1.018835`, and
+`sample_fraction_below_minus_one=0.717488`.
+
+| Measurement | CPU FP32 | CUDA FP32 with leaf offload |
+|---|---:|---:|
+| Total elapsed | **361.82 s** | **375.84 s** |
+| Load | Not separately measured | 2.59 s |
+| VAE decode | Not separately measured | 369.79 s |
+| Postprocess | Not separately measured | 0.63 s |
+| Export | Not separately measured | 2.30 s |
+| Peak PyTorch CUDA allocation | Not applicable | **10.574 GB** |
+
+The CUDA total time was **14.02 s (about 3.9%) slower** in this
+individual comparison. Different loading conditions mean this is not a
+controlled estimate of universal CPU-vs-GPU speed, but it gives no
+reason to adopt CUDA leaf offload for this tested hardware.
+
+**Memory metric caveat:** the observed CUDA peak allocation was
+**10.574 GB**, above the device's approximately **6 GB physical VRAM**.
+PyTorch allocator accounting is **not the same as physically resident
+VRAM**. Windows WDDM GPU-memory oversubscription/shared-memory paging
+is one possible explanation; the experiment does not prove the exact
+mechanism. The decode report now adds
+`cuda_physical_vram_gb` and
+`cuda_peak_exceeds_physical_vram`, and emits a warning when it
+detects this discrepancy.
+
+**Decision:** default CPU FP32 decode-only remains the safer diagnostic
+choice for this machine. Do not repeat the CUDA benchmark or 30-step
+full generation just to compare the same VAE offload path again.
+Future performance work should be based on a different testable
+hypothesis; improvements to VAE-only runtime do not imply equivalent
+improvements to diffusion time.
