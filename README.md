@@ -1344,3 +1344,78 @@ decode. Keep the successful 16-frame MP4 as the quality baseline.
 
 No new generation default, frame preset, offloading strategy, or
 selective CFG status is changed by this result.
+
+
+### Confirmed full 33-frame diffusion on GTX 1660 SUPER (2026-10-10)
+
+The user completed the previously planned **33-frame / 30-step**
+`robot-walk` experiment with full CFG=6 (no selective CFG), seed 42,
+720×480 native, 8 FPS, sequential CPU offload and
+`--latents-only`. This was **the same positive/negative scene
+profile** as the 16-frame quality reference; temporal length was
+the controlled change.
+
+**Actual measured outcome:**
+- 30/30 transformer steps completed, without an OOM or reported
+  execution error. `cfg_schedule=null`.
+- Saved
+  `outputs/robot-walk-33frames.latents.safetensors`
+  and `outputs/robot-walk-33frames.latents.safetensors.json`.
+  Latent shape **[1,9,16,60,90]**, correct for 33 native frames.
+- Latent checkpoints **1, 16, 30 sampled 0% nonfinite**.
+  This is not a VAE result; no visual output or MP4 exists yet.
+- Prompt setup/first step **254.783s**. Later 29 steps averaged
+  **210.925s**; latent completion **6371.615s**.
+- Load **120.71s**, inference **6371.65s**,
+  overall **6493.03s (1h48m13s)**.
+- Peak PyTorch CUDA allocated **1.348 GiB** (not equivalent to
+  total VRAM resident/used). No VAE ran.
+- Earlier same-profile 16-frame CFG6/30-step latent generation:
+  **2434.69s**, mean subsequent step **76.061s**,
+  peak CUDA allocation **0.763 GiB**.
+  Doubling temporal length 16→33 (2.0625×) increased
+  measured generation wall time ~**2.667×**;
+  average post-initial step ~**2.773×**.
+  This provides an actual non-linear cost observation rather than
+  the previous extrapolation. No model upgrade or kernel speedup
+  is demonstrated by these numbers.
+
+**Current conclusion:** the 33-frame native diffusion completed
+on the tested 6 GB system and produced finite sampled latents.
+The resulting 4.125-second video and quality of gait are **not
+yet validated**; the 1-step smoke test and the 30-step latent
+report have no playable video. Keep the successful 16-frame
+`robot-fullbody-walk-fp32.mp4` as visual reference.
+
+**Next safe action, no further expensive diffusion:**
+
+```powershell
+git pull
+.\.venv\Scripts\python.exe -m pytest -v
+
+.\.venv\Scripts\zigvideo.exe decode `
+  --latents outputs\robot-walk-33frames.latents.safetensors `
+  --device cpu `
+  --aspect 9:16 `
+  --focus-x 0.50 `
+  --fps 8 `
+  --output outputs\robot-walk-33frames-fp32.mp4 `
+  --dry-run
+```
+
+If the tests and preflight succeed, run the same decode command
+**without `--dry-run`**. This invokes the FP32 VAE only,
+not the transformer. The previous 16-frame CPU FP32 VAE took
+376.63s total; at 33 frames expect greater CPU RAM/time but
+do **not** assert any new runtime or memory guarantee.
+FP32 is preferred to the previously measured FP16 VAE output,
+which had nonfinite values. Inspect the 33-frame MP4 and its
+numerical-quality JSON before considering 49 frames, CFG
+schedules, or artificial delivery interpolation.
+
+**Visual evaluation:** compare 16-frame and 33-frame MP4s for
+one centered fully visible robot, recognizable alternating feet
+and arms, stability of camera and robot identity, background
+continuity, and absence of new malformed motion. A longer
+duration is not proof of an improved walking cycle. No changes
+to production defaults or generation settings have been made.
