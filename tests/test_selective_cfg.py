@@ -148,3 +148,68 @@ def test_cli_exposes_schedule_in_dry_run(tmp_path, capsys):
     assert args.func(args) == 0
     result = json.loads(capsys.readouterr().out.split("\n", 1)[1])
     assert result["cfg_step_batch_factors"] == [2, 1]
+
+
+def test_middle_cfg_window_reduces_real_batches_before_and_after():
+    transformer = MiniTransformer()
+    with selective_cfg_transformer(
+        transformer, guided_steps=1, guided_start=1, total_steps=3
+    ) as stats:
+        first = transformer(**_inputs())[0]
+        second = transformer(**_inputs())[0]
+        third = transformer(**_inputs())[0]
+
+    assert transformer.batch_sizes == [1, 2, 1]
+    assert all(x.shape[0] == 2 for x in (first, second, third))
+    assert stats.guided_calls == 1
+    assert stats.conditional_only_calls == 2
+    assert stats.to_dict()["requested_guided_start"] == 1
+    assert stats.to_dict()["guided_step_window"] == [1, 2]
+    assert stats.to_dict()["actual_transformer_batch_factors"] == [1, 2, 1]
+    assert len(transformer._forward_hooks) == 0
+
+
+@pytest.mark.parametrize(
+    "guided,start,total",
+    [(2, 2, 3), (1, -1, 3), (1, 4, 3), (1, True, 3)],
+)
+def test_cfg_window_rejects_invalid_ranges(guided, start, total):
+    with pytest.raises(ValueError):
+        validate_selective_cfg(
+            guided, total, 6.0, True, "sequential", guided_start=start
+        )
+
+
+def test_nonzero_start_requires_guided_step_count():
+    with pytest.raises(ValueError, match="requires"):
+        validate_selective_cfg(
+            None, 30, 6.0, True, "sequential", guided_start=8
+        )
+
+
+def test_middle_window_preview_and_cli(tmp_path, capsys):
+    import json
+
+    from zigvideo.backends.cogvideox_fp16 import generation_preview
+    from zigvideo.cli import build_parser
+
+    preview = generation_preview(
+        "ultra-safe", tmp_path / "models", tmp_path / "mid.mp4",
+        num_inference_steps=5, cfg_scale=6.0, latents_only=True,
+        offload_strategy="sequential", cfg_guided_steps=2,
+        cfg_guided_start=2,
+    )
+    assert preview["cfg_guided_start"] == 2
+    assert preview["cfg_step_batch_factors"] == [1, 1, 2, 2, 1]
+
+    parser = build_parser()
+    args = parser.parse_args([
+        "generate", "--backend", "cogvideox", "--prompt", "robot",
+        "--steps", "3", "--cfg-scale", "6", "--latents-only",
+        "--cfg-guided-steps", "1", "--cfg-guided-start", "1",
+        "--dry-run",
+    ])
+    assert args.func(args) == 0
+    payload = json.loads(capsys.readouterr().out.split("\n", 1)[1])
+    assert payload["cfg_step_batch_factors"] == [1, 2, 1]
+    assert payload["cfg_guided_start"] == 1
