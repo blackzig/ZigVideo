@@ -216,3 +216,55 @@ def test_decode_focus_cli_dry_run(tmp_path, capsys):
     assert preview["aspect"] == "9:16"
     assert preview["vae_precision"] == "float32"
     assert preview["device"] == "cpu"
+
+
+def test_saved_33_frame_cogvideox_latents_are_accepted(tmp_path):
+    """33 native CogVideoX frames are 9 latent temporal slices."""
+    source = tmp_path / "robot-walk-33frames.latents.safetensors"
+    save_file(
+        {"latents": torch.zeros((1, 9, 16, 60, 90), dtype=torch.float16)},
+        str(source),
+        metadata={
+            "model": "THUDM/CogVideoX-2b",
+            "width": "720", "height": "480", "frames": "33",
+            "steps": "30", "guidance_scale": "6.0",
+            "scene_profile": "robot-walk",
+        },
+    )
+    info = inspect_latent_file(source)
+    assert info["shape"] == [1, 9, 16, 60, 90]
+    assert info["native_resolution"] == "720x480"
+    assert info["latent_frame_count"] == 9
+    assert info["metadata"]["frames"] == "33"
+    assert info["metadata"]["scene_profile"] == "robot-walk"
+
+
+def test_33_frame_decode_dry_run_only_inspects_latents(tmp_path, capsys):
+    """33-frame portrait preflight must avoid loading CPU VAE model weights."""
+    import json
+    from zigvideo.cli import build_parser
+
+    source = tmp_path / "robot-walk-33frames.latents.safetensors"
+    save_file(
+        {"latents": torch.zeros((1, 9, 16, 60, 90), dtype=torch.float16)},
+        str(source),
+        metadata={
+            "model": "THUDM/CogVideoX-2b",
+            "width": "720", "height": "480", "frames": "33",
+            "steps": "30", "guidance_scale": "6.0",
+        },
+    )
+    args = build_parser().parse_args([
+        "decode", "--latents", str(source),
+        "--device", "cpu", "--aspect", "9:16", "--focus-x", "0.50",
+        "--fps", "8", "--output", str(tmp_path / "robot-walk-33frames-fp32.mp4"),
+        "--dry-run",
+    ])
+    assert args.func(args) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["source"]["shape"] == [1, 9, 16, 60, 90]
+    assert result["source"]["metadata"]["frames"] == "33"
+    assert result["vae_precision"] == "float32"
+    assert result["device"] == "cpu"
+    assert result["focus_x"] == 0.5
+    assert result["aspect"] == "9:16"
