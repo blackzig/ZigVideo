@@ -16,11 +16,17 @@ class DecodeReport:
     model_repo: str
     vae_dtype: str
     device: str
+    offload_strategy: str
     frame_count: int
     fps: int
     aspect: str
     raw_vae: dict
     quality: dict
+    load_seconds: float
+    decode_seconds: float
+    postprocess_seconds: float
+    export_seconds: float
+    peak_cuda_allocated_gb: float | None
     elapsed_seconds: float
 
     def to_dict(self) -> dict:
@@ -74,8 +80,9 @@ def decode_saved_latents(
     aspect: str = "9:16",
     fps: int = 8,
     cache_dir: str | Path = "models/huggingface",
+    device: str = "cpu",
 ) -> DecodeReport:
-    """Run the VAE only, on CPU in FP32, reusing previously generated latents."""
+    """Run the FP32 VAE only, on CPU or CUDA with leaf-level CPU offload."""
     import torch
     from diffusers import AutoencoderKLCogVideoX
     from diffusers.utils import export_to_video
@@ -85,6 +92,10 @@ def decode_saved_latents(
     info = inspect_latent_file(input_latents)
     if fps < 1:
         raise ValueError("fps must be positive")
+    if device not in ("cpu", "cuda"):
+        raise ValueError(f"Unsupported VAE decode device: {device}")
+    if device == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA is unavailable; use --device cpu.")
 
     output = Path(output)
     if output.suffix.lower() != ".mp4":
@@ -92,7 +103,8 @@ def decode_saved_latents(
     output.parent.mkdir(parents=True, exist_ok=True)
 
     started = time.perf_counter()
-    print("[ZigVideo] Decode-only: loading CogVideoX VAE on CPU in FP32...")
+    load_started = time.perf_counter()
+    print(f"[ZigVideo] Decode-only: loading CogVideoX FP32 VAE; device={device}...")
     vae = AutoencoderKLCogVideoX.from_pretrained(
         MODEL_REPO,
         subfolder="vae",
@@ -103,19 +115,51 @@ def decode_saved_latents(
     vae.enable_tiling()
     vae.enable_slicing()
 
+    if device == "cuda":
+        # VAE.decode() bypasses the root forward hook: whole-pipeline
+        # block offload caused a CPU-weight/CUDA-input mismatch previously.
+        # Leaf-level hooks load each decoder convolution onto CUDA.
+        print("[ZigVideo] Decode-only: VAE leaf-level CPU offload -> CUDA.")
+        vae.enable_group_offload(
+            onload_device=torch.device("cuda"),
+            offload_device=torch.device("cpu"),
+            offload_type="leaf_level",
+            use_stream=False,
+        )
+    load_seconds = time.perf_counter() - load_started
+
     source = load_file(str(input_latents), device="cpu")["latents"]
-    source = source.to(dtype=torch.float32)
+    source = source.to(device=device, dtype=torch.float32)
     # Matches Diffusers CogVideoXPipeline.decode_latents, without its transformer.
     z = source.permute(0, 2, 1, 3, 4)
     z = z / float(vae.config.scaling_factor)
 
+    if device == "cuda":
+        torch.cuda.reset_peak_memory_stats()
+        torch.cuda.synchronize()
+    decode_started = time.perf_counter()
     with torch.inference_mode():
         decoded = vae.decode(z).sample
+    if device == "cuda":
+        torch.cuda.synchronize()
+    decode_seconds = time.perf_counter() - decode_started
+
+    postprocess_started = time.perf_counter()
+    with torch.inference_mode():
         raw_stats = summarize_decoded_tensor(decoded)
         spatial_scale = 2 ** (len(vae.config.block_out_channels) - 1)
         processor = VideoProcessor(vae_scale_factor=spatial_scale)
         processed = processor.postprocess_video(decoded, output_type="pt")
         frames, quality = assess_tensor_video(processed[0])
+    if device == "cuda":
+        torch.cuda.synchronize()
+    postprocess_seconds = time.perf_counter() - postprocess_started
+
+    peak_cuda_allocated_gb = (
+        round(torch.cuda.max_memory_allocated() / (1024 ** 3), 3)
+        if device == "cuda"
+        else None
+    )
 
     print(
         "[ZigVideo] Raw VAE: "
@@ -129,19 +173,33 @@ def decode_saved_latents(
         f"max={quality['maximum_pixel_value_0_255']}/255"
     )
 
+    export_started = time.perf_counter()
     frames = reframe_frames(frames, aspect)
     export_to_video(frames, str(output), fps=fps, macro_block_size=8)
+    export_seconds = time.perf_counter() - export_started
+    print(
+        "[ZigVideo] Decode timings: "
+        f"load={load_seconds:.2f}s, VAE={decode_seconds:.2f}s, "
+        f"postprocess={postprocess_seconds:.2f}s, export={export_seconds:.2f}s, "
+        f"peak CUDA allocated={peak_cuda_allocated_gb} GB"
+    )
     report = DecodeReport(
         input_latents=info["path"],
         output=str(output.resolve()),
         model_repo=MODEL_REPO,
         vae_dtype="torch.float32",
-        device="cpu",
+        device=device,
+        offload_strategy="leaf_level" if device == "cuda" else "none",
         frame_count=len(frames),
         fps=fps,
         aspect=aspect,
         raw_vae=raw_stats,
         quality=quality,
+        load_seconds=round(load_seconds, 2),
+        decode_seconds=round(decode_seconds, 2),
+        postprocess_seconds=round(postprocess_seconds, 2),
+        export_seconds=round(export_seconds, 2),
+        peak_cuda_allocated_gb=peak_cuda_allocated_gb,
         elapsed_seconds=round(time.perf_counter() - started, 2),
     )
     report_path = output.with_suffix(output.suffix + ".json")
