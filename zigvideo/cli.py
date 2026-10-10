@@ -68,10 +68,12 @@ def cmd_generate(args: argparse.Namespace) -> int:
         or args.save_latents
         or args.latents_only
         or args.cfg_scale is not None
+        or args.cfg_guided_steps is not None
         or args.offload != "sequential"
     ) and backend != "cogvideox":
         raise ValueError(
-            "--vae-fp32, --save-latents, --latents-only, --cfg-scale "
+            "--vae-fp32, --save-latents, --latents-only, --cfg-scale, "
+            "--cfg-guided-steps "
             "and group offloading require the CogVideoX backend."
         )
 
@@ -82,6 +84,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
             "offload_strategy": args.offload,
             "latents_only": args.latents_only,
             "cfg_scale": args.cfg_scale,
+            "cfg_guided_steps": args.cfg_guided_steps,
         }
         if backend == "cogvideox"
         else {}
@@ -247,6 +250,16 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Experimental CogVideoX CFG override. Baseline is 6; CFG 1 "
             "avoids double-batch guidance but may change visual quality."
+        ),
+    )
+    generate.add_argument(
+        "--cfg-guided-steps",
+        type=int,
+        default=None,
+        help=(
+            "Experimental CogVideoX sequential-only schedule: use normal CFG "
+            "for the first N steps and conditional-only transformer computation "
+            "thereafter. Requires --latents-only and CFG > 1."
         ),
     )
     generate.add_argument(
