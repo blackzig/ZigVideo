@@ -70,11 +70,12 @@ def cmd_generate(args: argparse.Namespace) -> int:
         or args.cfg_scale is not None
         or args.cfg_guided_steps is not None
         or args.cfg_guided_start != 0
+        or args.experimental_cfg_video
         or args.offload != "sequential"
     ) and backend != "cogvideox":
         raise ValueError(
             "--vae-fp32, --save-latents, --latents-only, --cfg-scale, "
-            "--cfg-guided-steps "
+            "--cfg-guided-steps, --experimental-cfg-video "
             "and group offloading require the CogVideoX backend."
         )
 
@@ -87,6 +88,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
             "cfg_scale": args.cfg_scale,
             "cfg_guided_steps": args.cfg_guided_steps,
             "cfg_guided_start": args.cfg_guided_start,
+            "experimental_cfg_video": args.experimental_cfg_video,
         }
         if backend == "cogvideox"
         else {}
@@ -261,7 +263,8 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Experimental CogVideoX sequential-only schedule: use normal CFG "
             "for the first N steps and conditional-only transformer computation "
-            "thereafter. Requires --latents-only and CFG > 1."
+            "thereafter. Requires --latents-only or explicit "
+            "--experimental-cfg-video, and CFG > 1."
         ),
     )
     generate.add_argument(
@@ -272,6 +275,15 @@ def build_parser() -> argparse.ArgumentParser:
             "Zero-based starting step for selective CFG (default 0). "
             "Requires --cfg-guided-steps; together they define a "
             "guided window instead of always starting at the first step."
+        ),
+    )
+    generate.add_argument(
+        "--experimental-cfg-video",
+        action="store_true",
+        help=(
+            "Explicitly opt into a visually unvalidated selective-CFG MP4 "
+            "generation. Requires --cfg-guided-steps and sequential offload; "
+            "automatically saves final latents before VAE decoding."
         ),
     )
     generate.add_argument(
