@@ -142,6 +142,9 @@ def cmd_deliver(args: argparse.Namespace) -> int:
 
 def cmd_decode(args: argparse.Namespace) -> int:
     from .decode import decode_saved_latents, inspect_latent_file
+    from .backends.cogvideox_fp16 import validate_reframe_focus
+
+    validate_reframe_focus(args.aspect, args.focus_x)
 
     if args.dry_run:
         print(
@@ -153,6 +156,7 @@ def cmd_decode(args: argparse.Namespace) -> int:
                     "device": args.device,
                     "offload_strategy": ("leaf_level" if args.device == "cuda" else "none"),
                     "aspect": args.aspect,
+                    "focus_x": args.focus_x,
                     "fps": args.fps,
                     "output": args.output,
                     "cache_dir": args.cache_dir,
@@ -171,6 +175,7 @@ def cmd_decode(args: argparse.Namespace) -> int:
         fps=args.fps,
         cache_dir=args.cache_dir,
         device=args.device,
+        focus_x=args.focus_x,
     )
     print(json.dumps(report.to_dict(), indent=2, ensure_ascii=False))
     return 0
@@ -350,6 +355,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="FP32 VAE decode target. CUDA uses leaf-level CPU offload and is experimental.",
     )
     decode.add_argument("--aspect", choices=["9:16", "16:9"], default="9:16")
+    decode.add_argument(
+        "--focus-x", type=float, default=0.5,
+        help=(
+            "Horizontal subject center as a fraction of native width for "
+            "portrait crops: 0=left, 0.5=center (unchanged default), "
+            "1=right. Only applies with --aspect 9:16."
+        ),
+    )
     decode.add_argument(
         "--cache-dir", default="models/huggingface"
     )
