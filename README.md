@@ -772,3 +772,40 @@ image quality from these intermediate latents.
 Guidance is still restricted to `--latents-only` and
 `--offload sequential`, so regular MP4 generation and the
 quality reference remain untouched.
+
+
+### GTX 1660 SUPER: real middle-window CFG switching benchmark (2026-10-10)
+
+A **three-step latents-only** CogVideoX-2B test succeeded with CFG=6,
+`--cfg-guided-start 1 --cfg-guided-steps 1`, 720x480 native,
+16 frames, sequential offload, seed 42. The *actual* transformer
+batch-factor sequence was **[1, 2, 1]**: no CFG, CFG 6, no CFG.
+
+| Step | Actual CFG mode | Elapsed checkpoint interval |
+|---|---|---:|
+| 1 | Conditional-only (batch 1) | 78.584 s, includes encoding/setup |
+| 2 | CFG 6 (batch 2) | **72.167 s** |
+| 3 | Conditional-only (batch 1) | **36.211 s** |
+
+The last step was approximately **49.8% faster** than the guided
+second step *within the same run*. Pipeline diffusion time was
+**187.001 s**; loading took **99.33 s**; total elapsed was
+**286.8 s**. Peak CUDA allocation was **0.763 GB**, reflecting
+the guided step. Transformer calls: 3; guided: 1; conditional-only: 2.
+All three sampled latent checkpoints were finite (0% nonfinite).
+No VAE decode or MP4 export was performed, and image quality was
+**not evaluated**. Measured values reflect this hardware/run only.
+
+**Engineering verdict:** the hook can switch **both ways** between
+the actual positive-only batch and doubled CFG batch inside one
+real pipeline run, without observed numeric failures. The claim is
+computational, **not** a claim about preserving a recognizable robot
+or delivering usable video. The previous 30-step CFG=1 output
+demonstrated that speed alone is insufficient.
+
+**Next quality decision:** before any costly 30-step run, explicitly
+select a middle-window or prefix schedule, preserve the original
+CFG=6 benchmark prompt and seed for comparison, and add a guarded
+experimental MP4 output path that always saves latents and reports
+VAE numerical problems. Do not change the default CFG=6 generation
+preset. No full-length selective-CFG video has been tested.
