@@ -1011,3 +1011,46 @@ content** than cropping the horizontal MP4. Do not claim
 full-body walking without visual verification. The full
 CFG=6 generation baseline and all generation defaults are
 unchanged.
+
+
+### Final portrait FP32 decode and visual check (2026-10-10)
+
+The new `--focus-x 0.70` decoder was validated by the user on
+Windows with **95/95 passing tests** and a successful
+`decode --dry-run`. The real decoded file was:
+
+`outputs/cfg-mid-30steps-vertical-focus70-fp32.mp4`
+with JSON report alongside it. This re-used the already-saved
+`outputs/cfg-mid-30steps-quality.latents.safetensors`, without
+running the transformer again.
+
+- VAE: FP32 CPU, `--aspect 9:16 --focus-x 0.70 --fps 8`
+- Result: **16 frames, 360×640, 2 seconds**
+- Raw VAE sampled nonfinite fraction **0.0%**, quality
+  preflight `plausible`; source FP16 VAE had 18.333333%
+  sampled nonfinite values
+- Load 1.45s; VAE 318.56s; postprocess 0.29s; export 0.42s;
+  **total 320.72s (~5m21s)**
+
+Visual review of frames 1, 3, 5, 7, 9, 11, 13 and 15 of the
+user-supplied MP4:
+**the robot is recognizably present and centered**, with visible
+head, torso and arms through the short clip. There are subtle
+postural changes and a more distinct head turn toward the end.
+Its legs are still clipped by the framing and the large vehicle
+remains prominent behind it. The clip does **not** depict a
+convincing full-body walking cycle, and is only 2 seconds long.
+
+**Engineering outcome:** numerical stability of sampled VAE output
+is fixed in this CPU FP32 path; the subject-loss caused by centered
+portrait cropping is addressed with optional horizontal focus.
+The unchanged defaults remain as before (`focus_x=0.5`,
+full-CFG reference generation). **Selective CFG is not promoted
+to a default** or declared to have equivalent visual quality.
+Further work should target **native composition and temporal
+walking motion**, not additional step-time benchmarks.
+
+The saved final MP4 and JSON constitute this checkpoint.
+No additional denoising run is necessary to establish these
+observations; any future 30+ step generation should have a
+clearly defined quality hypothesis and estimated compute cost.
