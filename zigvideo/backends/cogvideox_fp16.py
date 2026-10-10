@@ -325,6 +325,8 @@ def save_final_latents(
     output: Path,
     attempt: CogVideoXAttempt,
     seed: int,
+    cfg_guided_steps: int | None = None,
+    cfg_guided_start: int = 0,
 ) -> str:
     """Persist small final latent tensor before VAE decoding can fail."""
     from safetensors.torch import save_file
@@ -332,20 +334,22 @@ def save_final_latents(
     destination = output.with_suffix(".latents.safetensors")
     destination.parent.mkdir(parents=True, exist_ok=True)
     data = latents.detach().to("cpu").contiguous()
-    save_file(
-        {"latents": data},
-        str(destination),
-        metadata={
-            "model": MODEL_REPO,
-            "width": str(attempt.width),
-            "height": str(attempt.height),
-            "frames": str(attempt.num_frames),
-            "steps": str(attempt.num_inference_steps),
-            "guidance_scale": str(attempt.guidance_scale),
-            "seed": str(seed),
-            "note": "Final CogVideoX denoising latents; not decoded video frames.",
-        },
-    )
+    metadata = {
+        "model": MODEL_REPO,
+        "width": str(attempt.width),
+        "height": str(attempt.height),
+        "frames": str(attempt.num_frames),
+        "steps": str(attempt.num_inference_steps),
+        "guidance_scale": str(attempt.guidance_scale),
+        "seed": str(seed),
+        "note": "Final CogVideoX denoising latents; not decoded video frames.",
+    }
+    if cfg_guided_steps is not None:
+        metadata["cfg_guided_steps"] = str(cfg_guided_steps)
+        metadata["cfg_guided_start"] = str(cfg_guided_start)
+        metadata["cfg_schedule"] = "selective_window"
+
+    save_file({"latents": data}, str(destination), metadata=metadata)
     filename = str(destination.resolve())
     print(f"[ZigVideo] Final latents saved before VAE decode: {filename}")
     return filename
@@ -527,7 +531,11 @@ def generate_text_to_video(
     if latents_only:
         # The upstream CogVideoXPipeline returns the native [B, F, C, H, W]
         # tensor for output_type="latent" without invoking VAE or video encoding.
-        latent_file = save_final_latents(result.frames, output, attempt, seed)
+        latent_file = save_final_latents(
+            result.frames, output, attempt, seed,
+            cfg_guided_steps=cfg_guided_steps,
+            cfg_guided_start=cfg_guided_start,
+        )
         del result
         _cleanup_cuda(torch)
         free_bytes, total_bytes = torch.cuda.mem_get_info()
