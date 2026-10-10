@@ -52,6 +52,18 @@ def cmd_generate(args: argparse.Namespace) -> int:
     backend = _resolve_generation_backend(args.backend)
     print(f"[ZigVideo] Selected backend: {backend}")
 
+    from .scene_profiles import resolve_generation_text
+
+    scene_text = resolve_generation_text(
+        args.prompt, args.scene_profile, args.negative_prompt
+    )
+    if backend != "cogvideox" and (
+        args.scene_profile is not None or args.negative_prompt is not None
+    ):
+        raise ValueError(
+            "--scene-profile and --negative-prompt require --backend cogvideox."
+        )
+
     if backend == "cogvideox":
         from .backends.cogvideox_fp16 import (
             generate_text_to_video,
@@ -89,6 +101,8 @@ def cmd_generate(args: argparse.Namespace) -> int:
             "cfg_guided_steps": args.cfg_guided_steps,
             "cfg_guided_start": args.cfg_guided_start,
             "experimental_cfg_video": args.experimental_cfg_video,
+            "negative_prompt": scene_text.negative_prompt,
+            "scene_profile": scene_text.scene_profile,
         }
         if backend == "cogvideox"
         else {}
@@ -103,6 +117,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
                     args.output,
                     aspect=args.aspect,
                     num_inference_steps=args.steps,
+                    **({"prompt": scene_text.prompt} if backend == "cogvideox" else {}),
                     **backend_kwargs,
                 ),
                 indent=2,
@@ -112,7 +127,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
         return 0
 
     report = generate_text_to_video(
-        prompt=args.prompt,
+        prompt=scene_text.prompt,
         output=args.output,
         preset=args.preset,
         aspect=args.aspect,
@@ -219,7 +234,24 @@ def build_parser() -> argparse.ArgumentParser:
         default="auto",
         help="Generation backend. Auto selects CogVideoX on legacy 4-6.5GB Turing/GTX GPUs.",
     )
-    generate.add_argument("--prompt", required=True, help="English generation prompt.")
+    generate.add_argument(
+        "--prompt", default=None,
+        help="English generation prompt. Required unless --scene-profile is set.",
+    )
+    generate.add_argument(
+        "--scene-profile", choices=["robot-walk"], default=None,
+        help=(
+            "Opt-in reproducible CogVideoX composition/motion experiment. "
+            "Use instead of --prompt; never alters the normal prompt path."
+        ),
+    )
+    generate.add_argument(
+        "--negative-prompt", default=None,
+        help=(
+            "Optional CogVideoX negative prompt override. "
+            "Unspecified keeps the established default or the selected scene profile."
+        ),
+    )
     generate.add_argument(
         "--output",
         default="outputs/first-zigvideo.mp4",
