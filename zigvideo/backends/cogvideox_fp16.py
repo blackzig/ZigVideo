@@ -100,6 +100,8 @@ class CogVideoXReport:
     delivery_resolution: str
     quality: dict
     raw_vae: dict
+    cfg_schedule: dict | None
+    experimental_cfg_video: bool
     vae_precision: str
     offload_strategy: str
     peak_cuda_allocated_gb: float
@@ -131,6 +133,7 @@ def generation_preview(
     latents_only: bool = False,
     cfg_guided_steps: int | None = None,
     cfg_guided_start: int = 0,
+    experimental_cfg_video: bool = False,
 ) -> dict:
     if preset not in PRESETS:
         raise ValueError(f"Unknown preset: {preset}")
@@ -154,8 +157,9 @@ def generation_preview(
     validate_selective_cfg(
         cfg_guided_steps, attempt.num_inference_steps, attempt.guidance_scale,
         latents_only, offload_strategy, cfg_guided_start,
+        experimental_cfg_video,
     )
-    if latents_only:
+    if latents_only or experimental_cfg_video:
         save_latents = True
     return {
         "backend": "cogvideox-fp16",
@@ -164,7 +168,12 @@ def generation_preview(
         "vae_precision": "float32" if vae_fp32 else "float16",
         "save_latents": save_latents,
         "latents_only": latents_only,
-        "output_mode": "latents_no_vae_or_mp4" if latents_only else "mp4",
+        "output_mode": (
+            "latents_no_vae_or_mp4" if latents_only
+            else "experimental_cfg_mp4" if experimental_cfg_video
+            else "mp4"
+        ),
+        "experimental_cfg_video": experimental_cfg_video,
         "cfg_transformer_batch_factor": transformer_cfg_batch_factor(attempt.guidance_scale),
         "cfg_guided_steps": cfg_guided_steps,
         "cfg_guided_start": cfg_guided_start,
@@ -370,6 +379,7 @@ def generate_text_to_video(
     latents_only: bool = False,
     cfg_guided_steps: int | None = None,
     cfg_guided_start: int = 0,
+    experimental_cfg_video: bool = False,
 ) -> CogVideoXReport | CogVideoXLatentReport:
     import torch
     from diffusers.utils import export_to_video
@@ -405,8 +415,9 @@ def generate_text_to_video(
     validate_selective_cfg(
         cfg_guided_steps, attempt.num_inference_steps, attempt.guidance_scale,
         latents_only, offload_strategy, cfg_guided_start,
+        experimental_cfg_video,
     )
-    if latents_only:
+    if latents_only or experimental_cfg_video:
         save_latents = True
 
     total_started = time.perf_counter()
@@ -469,7 +480,9 @@ def generate_text_to_video(
             # Capture on the last denoising step; pipeline() then invokes the
             # VAE internally and could raise before it returns.
             latent_file = save_final_latents(
-                callback_kwargs["latents"], output, attempt, seed
+                callback_kwargs["latents"], output, attempt, seed,
+                cfg_guided_steps=cfg_guided_steps,
+                cfg_guided_start=cfg_guided_start,
             )
         if step_index in checkpoints:
             metrics = summarize_latents(callback_kwargs["latents"], step_index + 1)
@@ -617,6 +630,8 @@ def generate_text_to_video(
         delivery_resolution=f"{frames[0].width}x{frames[0].height}",
         quality=quality,
         raw_vae=raw_vae,
+        cfg_schedule=cfg_stats.to_dict() if cfg_stats is not None else None,
+        experimental_cfg_video=experimental_cfg_video,
         vae_precision="float32" if vae_fp32 else "float16",
         offload_strategy=offload_strategy,
         peak_cuda_allocated_gb=peak_cuda_allocated_gb,
