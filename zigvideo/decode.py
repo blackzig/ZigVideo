@@ -27,6 +27,8 @@ class DecodeReport:
     postprocess_seconds: float
     export_seconds: float
     peak_cuda_allocated_gb: float | None
+    cuda_physical_vram_gb: float | None
+    cuda_peak_exceeds_physical_vram: bool | None
     elapsed_seconds: float
 
     def to_dict(self) -> dict:
@@ -72,6 +74,17 @@ def inspect_latent_file(path: str | Path) -> dict:
         "native_resolution": f"{width}x{height}",
         "latent_frame_count": shape[1],
     }
+
+
+def peak_allocation_exceeds_device_memory(
+    peak_allocated_gb: float | None, device_total_gb: float | None
+) -> bool | None:
+    """Flag a CUDA allocator/physical-capacity mismatch, not actual VRAM use."""
+    if peak_allocated_gb is None or device_total_gb is None:
+        return None
+    if peak_allocated_gb < 0 or device_total_gb <= 0:
+        raise ValueError("Invalid GPU allocation or memory capacity.")
+    return peak_allocated_gb > device_total_gb
 
 
 def configure_decode_vae(vae, device: str, torch) -> None:
@@ -165,6 +178,22 @@ def decode_saved_latents(
         if device == "cuda"
         else None
     )
+    cuda_physical_vram_gb = (
+        round(torch.cuda.get_device_properties(torch.cuda.current_device()).total_memory / (1024 ** 3), 3)
+        if device == "cuda"
+        else None
+    )
+    cuda_peak_exceeds_physical_vram = peak_allocation_exceeds_device_memory(
+        peak_cuda_allocated_gb, cuda_physical_vram_gb
+    )
+    if cuda_peak_exceeds_physical_vram:
+        print(
+            "[ZigVideo] WARNING: PyTorch CUDA peak allocation "
+            f"({peak_cuda_allocated_gb} GB) exceeds device-reported physical "
+            f"capacity ({cuda_physical_vram_gb} GB). Allocator accounting "
+            "is not direct physical VRAM residency; GPU/system-memory "
+            "oversubscription may be involved. Performance may suffer."
+        )
 
     print(
         "[ZigVideo] Raw VAE: "
@@ -205,6 +234,8 @@ def decode_saved_latents(
         postprocess_seconds=round(postprocess_seconds, 2),
         export_seconds=round(export_seconds, 2),
         peak_cuda_allocated_gb=peak_cuda_allocated_gb,
+        cuda_physical_vram_gb=cuda_physical_vram_gb,
+        cuda_peak_exceeds_physical_vram=cuda_peak_exceeds_physical_vram,
         elapsed_seconds=round(time.perf_counter() - started, 2),
     )
     report_path = output.with_suffix(output.suffix + ".json")
