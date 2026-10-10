@@ -876,3 +876,70 @@ Dry run must say `experimental_cfg_video=true`,
 Do not remove `--dry-run` until the new tests pass and the user
 chooses to spend the generation time. Any later completed MP4
 must be visually inspected and compared to the CFG=6 reference.
+
+
+### Results: full 30-step selective-CFG MP4 (2026-10-10)
+
+The first **full video** test of selective CFG completed on the
+GTX 1660 SUPER (6 GB), CogVideoX-2B FP16, native 720x480,
+16 frames at 8 FPS, 9:16 center-cropped to 360x640,
+30 steps, seed 42 and sequential offload. The experiment
+used `--cfg-scale 6 --cfg-guided-start 5 --cfg-guided-steps 20
+--experimental-cfg-video`.
+
+- **Actual GPU steps**: 5 conditional-only, 20 guided (CFG 6),
+  then 5 conditional-only. Verified 30 transformer calls and actual
+  batch factors `[1,1,1,1,1,2×20,1,1,1,1,1]`.
+- **Mean guided step time**: **78.2905 s** (steps 6–25).
+  First four post-setup conditional-only steps averaged
+  **39.3453 s**; final five averaged **39.9148 s**.
+- **Final latents**: reached in **2008.735 s**; sampled
+  steps 1, 16 and 30 had **0% nonfinite** values.
+- **VAE FP16**: **192.226 s**; sampled raw VAE output contained
+  **18.333333% nonfinite values**, sanitized for export.
+  Numeric status `nonfinite_detected` remains a quality warning.
+- **Total**: **2310.6 s (38m 30.6s)**. Prior full CFG=6
+  baseline had **2593.89 s (43m 13.89s)**; difference is
+  **283.29 s (4m 43.29s), ~10.92%**. These are separate runs;
+  the baseline report does not record prompt text, so exact
+  prompt equality cannot be independently verified from those
+  report files alone.
+- **Video visual inspection**: selective CFG has a robot partly
+  visible **at the right edge**, with a large vehicle occupying most
+  of the delivered vertical frame. The baseline full CFG=6 video
+  has a recognizable full-body robot centered in the vertical frame.
+  CFG=1 full had no clearly recognizable main robot. Thus the
+  selective 20/30 **does not pass the prompt/enquadramento quality
+  goal**, despite working correctly and saving runtime.
+
+**Decision:** leave default full CFG=6 unchanged, and keep the
+selective-video option experimental. Do not call 20/30 "quality
+validated", do not replace the standard preset, and do not
+launch another 30-step video generation yet.
+
+**Low-cost next diagnostic:** re-decode the **existing**
+`outputs/cfg-mid-30steps-quality.latents.safetensors` with
+the existing `zigvideo decode` command using `--device cpu`
+(FP32 VAE) and `--aspect 16:9`. The current 9:16 result is
+a center crop of 720x480 native diffusion. The wider view
+may reveal whether the subject exists outside the portrait crop.
+FP32 may also change VAE numerical behavior, but neither an
+improvement nor a recognizable subject is guaranteed. This
+reuses 30-step latents; it does **not** repeat the denoising pass.
+
+```powershell
+.\.venv\Scripts\zigvideo.exe decode `
+  --latents outputs\cfg-mid-30steps-quality.latents.safetensors `
+  --device cpu `
+  --aspect 16:9 `
+  --fps 8 `
+  --output outputs\cfg-mid-30steps-wide-fp32.mp4 `
+  --dry-run
+```
+
+If the dry-run validates the path/shape/metadata, remove just
+`--dry-run`. The CPU-only FP32 VAE can be slow and use
+substantial RAM; it does not run the transformer. Compare the
+wider MP4 (and raw VAE nonfinite diagnostic JSON) with the
+existing vertical export before changing the video crop
+or diffusion schedule.
