@@ -492,3 +492,88 @@ full generation just to compare the same VAE offload path again.
 Future performance work should be based on a different testable
 hypothesis; improvements to VAE-only runtime do not imply equivalent
 improvements to diffusion time.
+
+
+## CogVideoX diffusion-only CFG cost benchmark (opt-in, 2026-10-10)
+
+The 30-step, CFG=6, sequential CPU-offload generation remains the
+**reference for known usable visuals** on the GTX 1660 SUPER 6 GB.
+Tests with fewer denoising steps yielded dark video. The VAE FP32
+CPU-vs-CUDA work above found no benefit from GPU leaf offloading.
+
+To isolate **transformer** cost from slow VAE decoding, CogVideoX now
+supports `generate --latents-only`. It asks the pinned Diffusers
+pipeline for `output_type="latent"`, which skips VAE decoding and MP4
+export entirely. Final latents are saved as
+`outputs/<output-stem>.latents.safetensors` alongside a
+`.latents.safetensors.json` performance report.
+A `.mp4` output argument is used as the filename *stem*: **no MP4
+is produced** in this mode.
+
+This test adds an experimental `--cfg-scale` override. The
+baseline is CFG=6. For CogVideoX, values greater than 1 use
+classifier-free guidance with a doubled transformer input batch
+(conditional + unconditional); CFG=1 skips this doubling.
+This may reduce computation/memory but **changes the algorithm
+and can affect subject identity, adherence and overall visual
+quality**. CPU/GPU offload overhead may limit the actual gain.
+No CFG=1 quality or speed benefit is currently validated.
+
+### Step 1 — Update and check the plan only
+
+```powershell
+git pull
+.\.venv\Scripts\python.exe -m pytest -v
+.\.venv\Scripts\zigvideo.exe generate `
+  --backend cogvideox `
+  --prompt "A small friendly robot clearly visible in the center of the frame, full body, walking slowly through a rainy futuristic city street at night, detailed metallic body, neon reflections on wet pavement, cinematic lighting, realistic scene" `
+  --preset ultra-safe `
+  --aspect 9:16 `
+  --steps 2 `
+  --seed 42 `
+  --offload sequential `
+  --cfg-scale 1 `
+  --latents-only `
+  --output outputs\cfg1-2step-benchmark.mp4 `
+  --dry-run
+```
+
+The dry run **does not use the GPU, load weights or generate latents**.
+It should show `latents_only: true`,
+`cfg_transformer_batch_factor: 1` and CFG 1 in
+`native_generation`.
+
+### Step 2 — Optional short diffusion-only benchmark
+
+If the dry run and unit tests pass, repeat the command without
+`--dry-run` when convenient. It runs **two steps** and writes
+`outputs/cfg1-2step-benchmark.latents.safetensors` plus JSON.
+It will still load the CogVideoX pipeline, so expect model-loading
+and GPU inference cost, but **not** an additional expensive VAE decode.
+No output quality can be judged from these latents alone.
+
+The first checkpoint includes T5 prompt encoding, pipeline setup
+and the first denoising step. The interval between the first and
+second checkpoints is our approximate steady-state step measurement.
+The result includes `stage_timings.subsequent_step_mean_seconds` and
+`cfg_transformer_batch_factor`.
+
+Only if that experiment is viable, make a like-for-like **CFG=6**
+two-step reference with the *identical prompt, seed, resolution,
+offload mode and steps*, but:
+- `--cfg-scale 6`
+- `--output outputs\cfg6-2step-benchmark.mp4`
+
+Compare `stage_timings.subsequent_step_mean_seconds`,
+`peak_cuda_allocated_gb`, and model-loading time.
+Do **not** claim full 30-step speedups or acceptable visual
+quality from the two-step data. Never evaluate quality by decoding
+these severely under-denoised latent samples.
+
+The normal `generate` command is unchanged unless
+`--latents-only` or `--cfg-scale` is explicitly supplied.
+`--vae-fp32` with `--latents-only` is rejected because the
+VAE never runs.
+
+Relevant pinned Diffusers implementation:
+https://github.com/huggingface/diffusers/blob/v0.40.0/src/diffusers/pipelines/cogvideo/pipeline_cogvideox.py
