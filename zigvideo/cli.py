@@ -135,12 +135,13 @@ def cmd_decode(args: argparse.Namespace) -> int:
                     "backend": "cogvideox-vae-only",
                     "source": inspect_latent_file(args.latents),
                     "vae_precision": "float32",
-                    "device": "cpu",
+                    "device": args.device,
+                    "offload_strategy": ("leaf_level" if args.device == "cuda" else "none"),
                     "aspect": args.aspect,
                     "fps": args.fps,
                     "output": args.output,
                     "cache_dir": args.cache_dir,
-                    "note": "Does not load the text encoder or transformer, and does not run diffusion.",
+                    "note": "VAE only, no transformer or diffusion. CUDA uses experimental leaf-level CPU offload; dry-run does not check available VRAM.",
                 },
                 indent=2,
                 ensure_ascii=False,
@@ -154,6 +155,7 @@ def cmd_decode(args: argparse.Namespace) -> int:
         aspect=args.aspect,
         fps=args.fps,
         cache_dir=args.cache_dir,
+        device=args.device,
     )
     print(json.dumps(report.to_dict(), indent=2, ensure_ascii=False))
     return 0
@@ -272,7 +274,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     decode = sub.add_parser(
         "decode",
-        help="Decode saved CogVideoX latents using only the FP32 VAE on CPU.",
+        help="Decode saved CogVideoX latents using only an FP32 VAE (CPU default, CUDA experimental).",
     )
     decode.add_argument(
         "--latents", required=True, help="Saved .latents.safetensors input."
@@ -281,6 +283,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--output", required=True, help="Destination MP4 file."
     )
     decode.add_argument("--fps", type=int, default=8)
+    decode.add_argument(
+        "--device", choices=["cpu", "cuda"], default="cpu",
+        help="FP32 VAE decode target. CUDA uses leaf-level CPU offload and is experimental.",
+    )
     decode.add_argument("--aspect", choices=["9:16", "16:9"], default="9:16")
     decode.add_argument(
         "--cache-dir", default="models/huggingface"
