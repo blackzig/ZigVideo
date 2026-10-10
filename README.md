@@ -1296,3 +1296,51 @@ no sampled nonfinite FP32 VAE output. Compare all 33 frames
 against the established 16-frame full-CFG6 result. Interpolating
 to 24 FPS does not improve the underlying native gait and
 does not extend runtime.
+
+
+### Confirmed 33-frame hardware smoke test (2026-10-10)
+
+**Phase A and B have now been run by the user**, on the
+Windows GTX 1660 SUPER 6GB target:
+
+- `git pull` current; **124/124 pytest tests passed in
+  28.24 seconds**.
+- The 33-frame, 30-step full-CFG6 `robot-walk` **dry run**
+  returned 720×480, 33 native frames, 8 FPS, duration
+  **4.125 seconds**, `--latents-only`, `cfg_guided_steps=null`,
+  `quality_validated=false`, `time_validated=false`.
+  The effective prompt and negative prompt matched the 16-frame
+  profile test.
+- The real `--frames 33 --steps 1 --cfg-scale 6 --latents-only`
+  smoke run completed 1/1 transformer step without OOM using
+  sequential CPU offload. No VAE and no MP4 were involved.
+- Saved `outputs/robot-walk-33frames-smoke.latents.safetensors`
+  with shape **[1,9,16,60,90]**, matching 33 native frames after
+  CogVideoX temporal compression. The sampled final latent
+  tensor was **0% nonfinite**.
+- Peak **PyTorch CUDA allocated**: **1.336 GiB**, vs 0.763 GiB
+  in the earlier 16-frame 30-step latents-only run. This metric
+  is *not total device residency* and should not be treated as
+  a VRAM/OOM guarantee across 30 steps.
+- Model load **107.84s**; one-step pipeline (including setup)
+  **264.17s**; total **372.52s (~6m13s)**. The progress bar
+  showed ~247.21s, but first-step timing includes setup and
+  cannot be multiplied by 30 as a reliable runtime estimate.
+- Current conclusion: **33 native frames are feasible for one
+  full-CFG6 transformer step on this GPU**. Video quality,
+  30-step completion, VAE FP32 RAM and runtime remain untested.
+
+**Next quality decision (separate, opt-in, expensive):**
+A complete 33-frame/30-step run is now technically justified
+*for measuring gait continuity*, but it may take **well over one
+hour** for diffusion and several additional minutes for CPU
+FP32 decoding. If approved, run the same Phase A command
+**without `--dry-run`** and keep `--latents-only`; do not
+decode smoke-run latents for quality. This will save
+`outputs/robot-walk-33frames.latents.safetensors` and its JSON
+without VAE, allowing decoding later. Check real temporal shape,
+timing, numerical checkpoints and failures before deciding to
+decode. Keep the successful 16-frame MP4 as the quality baseline.
+
+No new generation default, frame preset, offloading strategy, or
+selective CFG status is changed by this result.
