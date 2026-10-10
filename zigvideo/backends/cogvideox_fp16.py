@@ -10,7 +10,11 @@ import time
 from PIL import Image
 
 from ..benchmark import summarize_stage_timings
-from ..selective_cfg import selective_cfg_transformer, validate_selective_cfg
+from ..selective_cfg import (
+    cfg_step_batch_factors,
+    selective_cfg_transformer,
+    validate_selective_cfg,
+)
 from ..quality import (
     assess_tensor_video,
     classify_numerical_stage,
@@ -126,6 +130,7 @@ def generation_preview(
     cfg_scale: float | None = None,
     latents_only: bool = False,
     cfg_guided_steps: int | None = None,
+    cfg_guided_start: int = 0,
 ) -> dict:
     if preset not in PRESETS:
         raise ValueError(f"Unknown preset: {preset}")
@@ -148,7 +153,7 @@ def generation_preview(
         raise ValueError("--vae-fp32 has no effect with --latents-only.")
     validate_selective_cfg(
         cfg_guided_steps, attempt.num_inference_steps, attempt.guidance_scale,
-        latents_only, offload_strategy,
+        latents_only, offload_strategy, cfg_guided_start,
     )
     if latents_only:
         save_latents = True
@@ -162,9 +167,11 @@ def generation_preview(
         "output_mode": "latents_no_vae_or_mp4" if latents_only else "mp4",
         "cfg_transformer_batch_factor": transformer_cfg_batch_factor(attempt.guidance_scale),
         "cfg_guided_steps": cfg_guided_steps,
+        "cfg_guided_start": cfg_guided_start,
         "cfg_step_batch_factors": (
-            [2] * cfg_guided_steps +
-            [1] * (attempt.num_inference_steps - cfg_guided_steps)
+            cfg_step_batch_factors(
+                attempt.num_inference_steps, cfg_guided_steps, cfg_guided_start
+            )
             if cfg_guided_steps is not None else None
         ),
         "offload": (
@@ -358,6 +365,7 @@ def generate_text_to_video(
     cfg_scale: float | None = None,
     latents_only: bool = False,
     cfg_guided_steps: int | None = None,
+    cfg_guided_start: int = 0,
 ) -> CogVideoXReport | CogVideoXLatentReport:
     import torch
     from diffusers.utils import export_to_video
@@ -392,7 +400,7 @@ def generate_text_to_video(
         raise ValueError("--vae-fp32 has no effect with --latents-only.")
     validate_selective_cfg(
         cfg_guided_steps, attempt.num_inference_steps, attempt.guidance_scale,
-        latents_only, offload_strategy,
+        latents_only, offload_strategy, cfg_guided_start,
     )
     if latents_only:
         save_latents = True
@@ -476,6 +484,7 @@ def generate_text_to_video(
         selective_cfg_transformer(
             pipeline.transformer,
             guided_steps=cfg_guided_steps,
+            guided_start=cfg_guided_start,
             total_steps=attempt.num_inference_steps,
         )
         if cfg_guided_steps is not None else nullcontext(None)
