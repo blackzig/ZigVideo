@@ -140,6 +140,8 @@ def generation_preview(
         transformer_cfg_batch_factor(cfg_scale)
         attempt = replace(attempt, guidance_scale=cfg_scale)
     attempt.validate()
+    if latents_only and vae_fp32:
+        raise ValueError("--vae-fp32 has no effect with --latents-only.")
     if latents_only:
         save_latents = True
     return {
@@ -318,6 +320,7 @@ def save_final_latents(
             "height": str(attempt.height),
             "frames": str(attempt.num_frames),
             "steps": str(attempt.num_inference_steps),
+            "guidance_scale": str(attempt.guidance_scale),
             "seed": str(seed),
             "note": "Final CogVideoX denoising latents; not decoded video frames.",
         },
@@ -370,6 +373,8 @@ def generate_text_to_video(
         attempt = replace(attempt, guidance_scale=cfg_scale)
     attempt.validate()
     transformer_cfg_batch_factor(attempt.guidance_scale)
+    if latents_only and vae_fp32:
+        raise ValueError("--vae-fp32 has no effect with --latents-only.")
     if latents_only:
         save_latents = True
 
