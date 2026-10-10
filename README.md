@@ -809,3 +809,70 @@ CFG=6 benchmark prompt and seed for comparison, and add a guarded
 experimental MP4 output path that always saves latents and reports
 VAE numerical problems. Do not change the default CFG=6 generation
 preset. No full-length selective-CFG video has been tested.
+
+
+### Explicit experimental selective-CFG MP4 quality gate (2026-10-10)
+
+After the real **[1, 2, 1]** mid-window GPU test succeeded, selective
+CFG can now be evaluated visually with a **separate explicit safety
+gate**: `--experimental-cfg-video`. No normal/default invocation
+enables it. The normal 30-step CogVideoX **CFG=6 / sequential-offload**
+quality reference is unchanged.
+
+Without this flag, the ZigVideo CLI **still refuses** selective CFG
+in video mode. With it, the requested guided window must mix guided
+and non-guided steps, CFG must exceed 1 and offload must be
+`sequential`. `--experimental-cfg-video` must **not** be combined
+with `--latents-only` and requires `--cfg-guided-steps`.
+
+Video mode **automatically saves final latents before VAE decoding**
+(and saves the selective guided window in safetensors metadata).
+The normal raw VAE/quality diagnostics and MP4 report are retained.
+The `.mp4.json` report additionally records
+`experimental_cfg_video=true` and `cfg_schedule` with real
+transformer batch factors. This matters because our previous 30-step
+CFG=1 run had **18.333333% sampled nonfinite FP16 VAE output** even
+though denoising latents were finite. A generated MP4 does not imply
+good image quality or clean numeric output.
+
+**Quality test plan, NOT yet run:** retain the established
+30-step CogVideoX prompt, seed 42, 720x480 native size, 16 frames
+and 9:16 output. A candidate middle-window test is **20 guided
+steps of 30**, guided zero-based indices **5..24**, with lighter
+conditional-only transformer steps at indices 0..4 and 25..29.
+This is **a hypothesis** about preserving recognizable structure,
+not a validated good schedule. At the measured ~75s / ~37s
+steady-step costs, 10 conditional-only steps might save around
+6 minutes of denoising compared with all-CFG; this is a rough
+estimate, not a promise about wall-clock runtime or quality.
+The test may still take more than 30 minutes including loading
+and VAE decoding.
+
+Before incurring that cost, run only the unit tests and dry run:
+
+```powershell
+git pull
+.\.venv\Scripts\python.exe -m pytest -v
+
+.\.venv\Scripts\zigvideo.exe generate `
+  --backend cogvideox `
+  --prompt "A small friendly robot walking through a rainy futuristic city" `
+  --preset ultra-safe `
+  --aspect 9:16 `
+  --steps 30 `
+  --seed 42 `
+  --offload sequential `
+  --cfg-scale 6 `
+  --cfg-guided-start 5 `
+  --cfg-guided-steps 20 `
+  --experimental-cfg-video `
+  --output outputs\cfg-mid-30steps-quality.mp4 `
+  --dry-run
+```
+
+Dry run must say `experimental_cfg_video=true`,
+`output_mode="experimental_cfg_mp4"`, `save_latents=true` and
+`cfg_step_batch_factors` with five 1s, twenty 2s and five 1s.
+Do not remove `--dry-run` until the new tests pass and the user
+chooses to spend the generation time. Any later completed MP4
+must be visually inspected and compared to the CFG=6 reference.
