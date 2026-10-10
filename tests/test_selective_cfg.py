@@ -213,3 +213,24 @@ def test_middle_window_preview_and_cli(tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out.split("\n", 1)[1])
     assert payload["cfg_step_batch_factors"] == [1, 2, 1]
     assert payload["cfg_guided_start"] == 1
+
+
+def test_latent_metadata_distinguishes_window_cfg_from_constant_cfg(tmp_path):
+    from safetensors import safe_open
+    from zigvideo.backends.cogvideox_fp16 import (
+        CogVideoXAttempt,
+        save_final_latents,
+    )
+
+    attempt = CogVideoXAttempt(720, 480, 16, 8, 3, guidance_scale=6.0)
+    path = save_final_latents(
+        torch.zeros((1, 4, 16, 60, 90), dtype=torch.float16),
+        tmp_path / "window.mp4", attempt, 42,
+        cfg_guided_steps=1, cfg_guided_start=1,
+    )
+    with safe_open(path, framework="pt", device="cpu") as file:
+        meta = file.metadata()
+    assert meta["guidance_scale"] == "6.0"
+    assert meta["cfg_schedule"] == "selective_window"
+    assert meta["cfg_guided_steps"] == "1"
+    assert meta["cfg_guided_start"] == "1"
