@@ -23,10 +23,17 @@ def validate_selective_cfg(
     latents_only: bool,
     offload_strategy: str,
     guided_start: int = 0,
+    experimental_video: bool = False,
 ) -> None:
     if not isinstance(guided_start, int) or isinstance(guided_start, bool):
         raise ValueError("--cfg-guided-start must be an integer.")
+    if experimental_video and latents_only:
+        raise ValueError("--experimental-cfg-video cannot use --latents-only.")
     if guided_steps is None:
+        if experimental_video:
+            raise ValueError(
+                "--experimental-cfg-video requires --cfg-guided-steps."
+            )
         if guided_start != 0:
             raise ValueError("--cfg-guided-start requires --cfg-guided-steps.")
         return
@@ -42,9 +49,15 @@ def validate_selective_cfg(
         )
     if guidance_scale <= 1.0:
         raise ValueError("Selective CFG requires a baseline --cfg-scale > 1.")
-    if not latents_only:
+    if not latents_only and not experimental_video:
         raise ValueError(
-            "Selective CFG is restricted to --latents-only until validated."
+            "Selective CFG MP4 requires explicit --experimental-cfg-video; "
+            "otherwise use --latents-only."
+        )
+    if experimental_video and not 0 < guided_steps < total_steps:
+        raise ValueError(
+            "Experimental selective CFG MP4 requires a mixed guided/unguided "
+            "schedule (between 1 and steps-1 guided steps)."
         )
     if offload_strategy != "sequential":
         raise ValueError(
