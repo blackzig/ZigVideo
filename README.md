@@ -1054,3 +1054,87 @@ The saved final MP4 and JSON constitute this checkpoint.
 No additional denoising run is necessary to establish these
 observations; any future 30+ step generation should have a
 clearly defined quality hypothesis and estimated compute cost.
+
+
+### Next quality hypothesis: camera composition and visible walking (2026-10-10)
+
+The validated 2-second selective-CFG robot clip revealed two separate
+problems: a full-body character was never composed in the native scene,
+and the robot did **not** perform a convincing alternating-foot walk.
+`--focus-x 0.70` recovered the existing subject during portrait
+decoding but **cannot reconstruct missing legs or invent motion**.
+Changing the output from 8 FPS to 24 FPS is delivery interpolation,
+**not** new model-generated movement.
+
+To isolate the next variable without changing successful settings,
+ZigVideo now has an **opt-in prompt experiment**:
+
+- `--scene-profile robot-walk`: a fixed positive/negative prompt
+  targeting **one** small robot completely visible from head to both feet
+  within the central portrait-safe region of the native 720×480 image.
+  It explicitly describes alternating left/right footfalls, arm
+  swing, tripod camera, and an unobstructed simple rainy street.
+  The negative prompt discourages vehicles, clipped legs, zoom/pan,
+  static poses, sliding feet, and extra limbs. These instructions are
+  **hypotheses**, not guaranteed model capabilities.
+- `--prompt` remains the ordinary custom-prompt option. Specify
+  **either** `--prompt` **or** `--scene-profile`, not both.
+  The latter is CogVideoX-only.
+- `--negative-prompt` optionally overrides the chosen negative text
+  for CogVideoX. Without it, the **exact previous default** is used
+  for ordinary prompts.
+- The **exact** positive prompt, negative prompt and optional profile
+  name are now written to dry-run JSON, full MP4/latents-only JSON
+  reports and (when saving latents) safetensors metadata. Previously
+  missing prompt provenance made quality comparisons less rigorous.
+  Reproduce a comparison using the exact reported prompt/seed/CFG
+  and generation settings; reports do not imply visual quality.
+- All old CogVideoX defaults, including 30 steps, CFG=6,
+  16 native source frames at 8 FPS, sequential offload, FP16 VAE
+  and center crop, remain unchanged. Selective CFG remains
+  experimental; the new profile does **not** enable it.
+  For the already observed VAE FP16 nonfinites, preserve latents
+  with `--save-latents` if eventually doing a real run, then use
+  separate FP32 CPU decode for quality inspection.
+
+**Do the zero-GPU preflight first:**
+
+```powershell
+git pull
+.\.venv\Scripts\python.exe -m pytest -v
+
+.\.venv\Scripts\zigvideo.exe generate `
+  --backend cogvideox `
+  --scene-profile robot-walk `
+  --preset ultra-safe `
+  --aspect 9:16 `
+  --steps 30 `
+  --seed 42 `
+  --offload sequential `
+  --cfg-scale 6 `
+  --save-latents `
+  --output outputs\robot-fullbody-walk-test.mp4 `
+  --dry-run
+```
+
+The dry run must show `scene_profile="robot-walk"`, the
+exact effective prompt and negative prompt, `save_latents=true`,
+and **normal full CFG=6** (no `cfg_schedule`). It doesn't load
+models or perform any inference.
+
+**Do NOT remove `--dry-run` until unit tests and profile output
+are checked.** If/when the user elects the GPU cost, a 30-step
+run could again require roughly **40+ minutes** and subsequent
+CPU FP32 VAE decoding ~5 minutes. A new video is warranted only
+to test whether the revised composition/motion prompt actually
+improves body visibility and gait against the earlier CFG=6
+reference; do not assume that a 16-frame, 2-second clip can show
+a natural extended walk or a 15-second short. Longer content will
+require a separate temporal-generation plan.
+
+**Acceptance criteria:** one robot is centered within the native
+portrait-safe area *before* cropping; head and both feet remain
+visible across the 16 frames; alternate foot placement is clear
+rather than foot sliding; VAE FP32 decoded result has no sampled
+nonfinite values; any failed criterion is recorded, not hidden
+by postprocessing.
