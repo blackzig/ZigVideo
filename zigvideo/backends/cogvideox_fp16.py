@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
+from contextlib import nullcontext
 import gc
 import json
 from pathlib import Path
@@ -9,6 +10,7 @@ import time
 from PIL import Image
 
 from ..benchmark import summarize_stage_timings
+from ..selective_cfg import selective_cfg_transformer, validate_selective_cfg
 from ..quality import (
     assess_tensor_video,
     classify_numerical_stage,
@@ -59,6 +61,7 @@ class CogVideoXLatentReport:
     native_attempt: dict
     offload_strategy: str
     cfg_transformer_batch_factor: int
+    cfg_schedule: dict | None
     stage_timings: dict
     latent_checks: list[dict]
     peak_cuda_allocated_gb: float
@@ -122,6 +125,7 @@ def generation_preview(
     offload_strategy: str = "sequential",
     cfg_scale: float | None = None,
     latents_only: bool = False,
+    cfg_guided_steps: int | None = None,
 ) -> dict:
     if preset not in PRESETS:
         raise ValueError(f"Unknown preset: {preset}")
@@ -142,6 +146,10 @@ def generation_preview(
     attempt.validate()
     if latents_only and vae_fp32:
         raise ValueError("--vae-fp32 has no effect with --latents-only.")
+    validate_selective_cfg(
+        cfg_guided_steps, attempt.num_inference_steps, attempt.guidance_scale,
+        latents_only, offload_strategy,
+    )
     if latents_only:
         save_latents = True
     return {
@@ -153,6 +161,12 @@ def generation_preview(
         "latents_only": latents_only,
         "output_mode": "latents_no_vae_or_mp4" if latents_only else "mp4",
         "cfg_transformer_batch_factor": transformer_cfg_batch_factor(attempt.guidance_scale),
+        "cfg_guided_steps": cfg_guided_steps,
+        "cfg_step_batch_factors": (
+            [2] * cfg_guided_steps +
+            [1] * (attempt.num_inference_steps - cfg_guided_steps)
+            if cfg_guided_steps is not None else None
+        ),
         "offload": (
             "sequential CPU offload"
             if offload_strategy == "sequential"
@@ -343,6 +357,7 @@ def generate_text_to_video(
     offload_strategy: str = "sequential",
     cfg_scale: float | None = None,
     latents_only: bool = False,
+    cfg_guided_steps: int | None = None,
 ) -> CogVideoXReport | CogVideoXLatentReport:
     import torch
     from diffusers.utils import export_to_video
@@ -375,6 +390,10 @@ def generate_text_to_video(
     transformer_cfg_batch_factor(attempt.guidance_scale)
     if latents_only and vae_fp32:
         raise ValueError("--vae-fp32 has no effect with --latents-only.")
+    validate_selective_cfg(
+        cfg_guided_steps, attempt.num_inference_steps, attempt.guidance_scale,
+        latents_only, offload_strategy,
+    )
     if latents_only:
         save_latents = True
 
@@ -453,7 +472,15 @@ def generate_text_to_video(
 
     torch.cuda.reset_peak_memory_stats()
     inference_started = time.perf_counter()
-    with torch.inference_mode():
+    cfg_context = (
+        selective_cfg_transformer(
+            pipeline.transformer,
+            guided_steps=cfg_guided_steps,
+            total_steps=attempt.num_inference_steps,
+        )
+        if cfg_guided_steps is not None else nullcontext(None)
+    )
+    with torch.inference_mode(), cfg_context as cfg_stats:
         result = pipeline(
             prompt=prompt,
             negative_prompt=(
@@ -505,6 +532,7 @@ def generate_text_to_video(
             native_attempt=asdict(attempt),
             offload_strategy=offload_strategy,
             cfg_transformer_batch_factor=transformer_cfg_batch_factor(attempt.guidance_scale),
+            cfg_schedule=cfg_stats.to_dict() if cfg_stats is not None else None,
             stage_timings=stage_timings,
             latent_checks=latent_checks,
             peak_cuda_allocated_gb=peak_cuda_allocated_gb,
