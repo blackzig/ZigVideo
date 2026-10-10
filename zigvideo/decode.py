@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import time
 
-from .backends.cogvideox_fp16 import MODEL_REPO, reframe_frames
+from .backends.cogvideox_fp16 import MODEL_REPO, reframe_frames, validate_reframe_focus
 from .quality import assess_tensor_video, summarize_decoded_tensor
 
 
@@ -20,6 +20,7 @@ class DecodeReport:
     frame_count: int
     fps: int
     aspect: str
+    focus_x: float
     raw_vae: dict
     quality: dict
     load_seconds: float
@@ -112,6 +113,7 @@ def decode_saved_latents(
     fps: int = 8,
     cache_dir: str | Path = "models/huggingface",
     device: str = "cpu",
+    focus_x: float = 0.5,
 ) -> DecodeReport:
     """Run the FP32 VAE only, on CPU or CUDA with leaf-level CPU offload."""
     import torch
@@ -120,6 +122,7 @@ def decode_saved_latents(
     from diffusers.video_processor import VideoProcessor
     from safetensors.torch import load_file
 
+    validate_reframe_focus(aspect, focus_x)
     info = inspect_latent_file(input_latents)
     if fps < 1:
         raise ValueError("fps must be positive")
@@ -208,7 +211,7 @@ def decode_saved_latents(
     )
 
     export_started = time.perf_counter()
-    frames = reframe_frames(frames, aspect)
+    frames = reframe_frames(frames, aspect, focus_x=focus_x)
     export_to_video(frames, str(output), fps=fps, macro_block_size=8)
     export_seconds = time.perf_counter() - export_started
     print(
@@ -227,6 +230,7 @@ def decode_saved_latents(
         frame_count=len(frames),
         fps=fps,
         aspect=aspect,
+        focus_x=focus_x,
         raw_vae=raw_stats,
         quality=quality,
         load_seconds=round(load_seconds, 2),
