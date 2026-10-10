@@ -74,6 +74,24 @@ def inspect_latent_file(path: str | Path) -> dict:
     }
 
 
+def configure_decode_vae(vae, device: str, torch) -> None:
+    """Configure safe VAE-only execution without any transformer dependencies."""
+    if device not in ("cpu", "cuda"):
+        raise ValueError(f"Unsupported VAE decode device: {device}")
+    vae.enable_tiling()
+    vae.enable_slicing()
+    if device == "cuda":
+        # CogVideoX's decode() bypasses the root forward hook, so
+        # block-level offloading of the VAE is unsafe here.
+        print("[ZigVideo] Decode-only: VAE leaf-level CPU offload -> CUDA.")
+        vae.enable_group_offload(
+            onload_device=torch.device("cuda"),
+            offload_device=torch.device("cpu"),
+            offload_type="leaf_level",
+            use_stream=False,
+        )
+
+
 def decode_saved_latents(
     input_latents: str | Path,
     output: str | Path,
@@ -112,20 +130,7 @@ def decode_saved_latents(
         cache_dir=str(cache_dir),
         low_cpu_mem_usage=True,
     ).eval()
-    vae.enable_tiling()
-    vae.enable_slicing()
-
-    if device == "cuda":
-        # VAE.decode() bypasses the root forward hook: whole-pipeline
-        # block offload caused a CPU-weight/CUDA-input mismatch previously.
-        # Leaf-level hooks load each decoder convolution onto CUDA.
-        print("[ZigVideo] Decode-only: VAE leaf-level CPU offload -> CUDA.")
-        vae.enable_group_offload(
-            onload_device=torch.device("cuda"),
-            offload_device=torch.device("cpu"),
-            offload_type="leaf_level",
-            use_stream=False,
-        )
+    configure_decode_vae(vae, device, torch)
     load_seconds = time.perf_counter() - load_started
 
     source = load_file(str(input_latents), device="cpu")["latents"]
