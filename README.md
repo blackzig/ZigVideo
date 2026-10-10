@@ -392,3 +392,63 @@ offload strategy and do not spend time on a 30-step group run.
 References:
 - https://huggingface.co/docs/diffusers/v0.40.0/optimization/memory
 - https://github.com/huggingface/diffusers/blob/v0.40.0/src/diffusers/hooks/group_offloading.py
+
+
+## VAE-only CPU versus CUDA FP32 benchmark (experimental, 2026-10)
+
+The previous 8-step CogVideoX tensor was saved to
+`outputs/cogvideo-8steps-vae-fp32.latents.safetensors`.
+Its CPU FP32 decode-only reference took **361.82 seconds end-to-end**,
+with `sample_mean=-1.018835` and final pixel maximum `2/255`.
+The output is near-black because the saved **8-step** latent content was
+insufficient; changing the decode device cannot restore missing details.
+
+The `zigvideo decode` command now optionally accepts `--device cuda`.
+The default **remains CPU FP32** (previously tested). On CUDA the VAE is
+loaded in FP32 and uses **leaf-level CPU offloading** with tiling and
+slicing. This avoids loading the transformer or performing diffusion,
+and avoids the whole-pipeline group hooks that previously caused a
+CPU/GPU convolution mismatch.
+
+This is a **performance isolation experiment**, not a quality fix or a
+guaranteed VRAM fit. On a 6 GB GTX card CUDA FP32 may be slower or
+exceed free memory. Close other GPU applications if possible.
+
+### Validate without loading model weights
+
+```powershell
+git pull
+.\.venv\Scripts\python.exe -m pytest -v
+.\.venv\Scripts\zigvideo.exe decode `
+  --latents outputs\cogvideo-8steps-vae-fp32.latents.safetensors `
+  --output outputs\cogvideo-8steps-cuda-fp32.mp4 `
+  --device cuda `
+  --fps 8 `
+  --aspect 9:16 `
+  --dry-run
+```
+
+### Optional CUDA-only VAE experiment
+
+Remove only `--dry-run` from the previous command. For comparable
+results, keep the **same input latent file**, FP32, aspect and FPS.
+No diffusion is run, so even if it is slow it avoids a 30-step job.
+The resulting JSON reports:
+- `load_seconds`: VAE model setup, including offload hooks.
+- `decode_seconds`: the VAE decode itself, excluding postprocessing.
+- `postprocess_seconds`: raw-value and frame quality analysis.
+- `export_seconds`: reframe and MP4 encoding.
+- `peak_cuda_allocated_gb`: measured PyTorch allocation (CUDA only).
+
+Compare the CUDA `elapsed_seconds` against the earlier CPU-only total
+**361.82s**, with the caveat that loading/cache conditions can differ.
+The old CPU report did **not** break down individual stages. Only a
+new CPU run with the new code can support an exact per-stage comparison;
+it should not be necessary unless results are ambiguous.
+
+Check that the candidate has no unexpected NaN/Inf and a broadly
+consistent raw VAE output distribution. If CUDA is slower or fails,
+simply omit `--device cuda` on future decodes. Do **not** repeat
+30-step full generation until this measurement establishes an
+advantage. FP32 VAE decode, even if accelerated, covers only part
+of the full CogVideoX runtime.
