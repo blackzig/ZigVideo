@@ -47,6 +47,40 @@ PRESETS: dict[str, CogVideoXAttempt] = {
 
 
 @dataclass(frozen=True)
+class CogVideoXLatentReport:
+    """Result of denoising without VAE decoding or MP4 export."""
+
+    output: str
+    latent_file: str
+    model_repo: str
+    backend: str
+    preset: str
+    seed: int
+    native_attempt: dict
+    offload_strategy: str
+    cfg_transformer_batch_factor: int
+    stage_timings: dict
+    latent_checks: list[dict]
+    peak_cuda_allocated_gb: float
+    load_seconds: float
+    inference_seconds: float
+    total_seconds: float
+    physical_vram_gb: float
+    free_vram_after_cleanup_gb: float
+    quality: str = "not_evaluated_latents_only"
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+def transformer_cfg_batch_factor(guidance_scale: float) -> int:
+    """Diffusers CogVideoX uses a double batch for guidance_scale > 1."""
+    if not 1 <= guidance_scale <= 30:
+        raise ValueError("CFG scale must be between 1 and 30.")
+    return 2 if guidance_scale > 1.0 else 1
+
+
+@dataclass(frozen=True)
 class CogVideoXReport:
     output: str
     model_repo: str
@@ -86,6 +120,8 @@ def generation_preview(
     vae_fp32: bool = False,
     save_latents: bool = False,
     offload_strategy: str = "sequential",
+    cfg_scale: float | None = None,
+    latents_only: bool = False,
 ) -> dict:
     if preset not in PRESETS:
         raise ValueError(f"Unknown preset: {preset}")
@@ -100,13 +136,21 @@ def generation_preview(
         if num_inference_steps < 1:
             raise ValueError("num_inference_steps must be >= 1")
         attempt = replace(attempt, num_inference_steps=num_inference_steps)
+    if cfg_scale is not None:
+        transformer_cfg_batch_factor(cfg_scale)
+        attempt = replace(attempt, guidance_scale=cfg_scale)
     attempt.validate()
+    if latents_only:
+        save_latents = True
     return {
         "backend": "cogvideox-fp16",
         "model_repo": MODEL_REPO,
         "precision": "float16",
         "vae_precision": "float32" if vae_fp32 else "float16",
         "save_latents": save_latents,
+        "latents_only": latents_only,
+        "output_mode": "latents_no_vae_or_mp4" if latents_only else "mp4",
+        "cfg_transformer_batch_factor": transformer_cfg_batch_factor(attempt.guidance_scale),
         "offload": (
             "sequential CPU offload"
             if offload_strategy == "sequential"
@@ -294,7 +338,9 @@ def generate_text_to_video(
     vae_fp32: bool = False,
     save_latents: bool = False,
     offload_strategy: str = "sequential",
-) -> CogVideoXReport:
+    cfg_scale: float | None = None,
+    latents_only: bool = False,
+) -> CogVideoXReport | CogVideoXLatentReport:
     import torch
     from diffusers.utils import export_to_video
 
@@ -319,7 +365,13 @@ def generate_text_to_video(
         if num_inference_steps < 1:
             raise ValueError("num_inference_steps must be >= 1")
         attempt = replace(attempt, num_inference_steps=num_inference_steps)
+    if cfg_scale is not None:
+        transformer_cfg_batch_factor(cfg_scale)
+        attempt = replace(attempt, guidance_scale=cfg_scale)
     attempt.validate()
+    transformer_cfg_batch_factor(attempt.guidance_scale)
+    if latents_only:
+        save_latents = True
 
     total_started = time.perf_counter()
     load_started = time.perf_counter()
@@ -359,7 +411,10 @@ def generate_text_to_video(
     print(
         "[ZigVideo] CogVideoX attempt: "
         f"{attempt.width}x{attempt.height}, {attempt.num_frames} frames, "
-        f"{attempt.num_inference_steps} steps @ {attempt.fps} fps"
+        f"{attempt.num_inference_steps} steps @ {attempt.fps} fps; "
+        f"CFG={attempt.guidance_scale} "
+        f"(transformer batch factor={transformer_cfg_batch_factor(attempt.guidance_scale)}); "
+        f"latents-only={latents_only}"
     )
 
     # Only three scalar diagnostics are collected to avoid significantly
@@ -374,7 +429,7 @@ def generate_text_to_video(
         # Record a synchronized checkpoint before optional disk writes.
         torch.cuda.synchronize()
         step_end_elapsed_seconds.append(time.perf_counter() - inference_started)
-        if save_latents and step_index == attempt.num_inference_steps - 1:
+        if save_latents and not latents_only and step_index == attempt.num_inference_steps - 1:
             # Capture on the last denoising step; pipeline() then invokes the
             # VAE internally and could raise before it returns.
             latent_file = save_final_latents(
@@ -406,7 +461,7 @@ def generate_text_to_video(
             num_inference_steps=attempt.num_inference_steps,
             guidance_scale=attempt.guidance_scale,
             generator=generator,
-            output_type="pt",
+            output_type="latent" if latents_only else "pt",
             callback_on_step_end=check_latents,
             callback_on_step_end_tensor_inputs=["latents"],
         )
@@ -427,6 +482,43 @@ def generate_text_to_video(
         f"pipeline-total={inference_seconds:.2f}s; "
         f"peak CUDA allocated={peak_cuda_allocated_gb:.2f}GB"
     )
+
+    if latents_only:
+        # The upstream CogVideoXPipeline returns the native [B, F, C, H, W]
+        # tensor for output_type="latent" without invoking VAE or video encoding.
+        latent_file = save_final_latents(result.frames, output, attempt, seed)
+        del result
+        _cleanup_cuda(torch)
+        free_bytes, total_bytes = torch.cuda.mem_get_info()
+        report = CogVideoXLatentReport(
+            output=str(Path(latent_file)),
+            latent_file=latent_file,
+            model_repo=MODEL_REPO,
+            backend="cogvideox-fp16-latents-only",
+            preset=preset,
+            seed=seed,
+            native_attempt=asdict(attempt),
+            offload_strategy=offload_strategy,
+            cfg_transformer_batch_factor=transformer_cfg_batch_factor(attempt.guidance_scale),
+            stage_timings=stage_timings,
+            latent_checks=latent_checks,
+            peak_cuda_allocated_gb=peak_cuda_allocated_gb,
+            load_seconds=round(load_seconds, 2),
+            inference_seconds=round(inference_seconds, 2),
+            total_seconds=round(time.perf_counter() - total_started, 2),
+            physical_vram_gb=round(total_bytes / (1024 ** 3), 2),
+            free_vram_after_cleanup_gb=round(free_bytes / (1024 ** 3), 2),
+        )
+        report_path = Path(latent_file + ".json")
+        report_path.write_text(
+            json.dumps(report.to_dict(), indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        print(
+            f"[ZigVideo] Latents-only complete: {latent_file}; "
+            f"VAE skipped; MP4 not created; report: {report_path}"
+        )
+        return report
 
     # Inspect tensors before NumPy/PIL conversion to catch NaN, Inf,
     # and near-black output that would otherwise be silently exported.
