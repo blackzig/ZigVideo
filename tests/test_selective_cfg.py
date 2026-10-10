@@ -234,3 +234,95 @@ def test_latent_metadata_distinguishes_window_cfg_from_constant_cfg(tmp_path):
     assert meta["cfg_schedule"] == "selective_window"
     assert meta["cfg_guided_steps"] == "1"
     assert meta["cfg_guided_start"] == "1"
+
+
+def test_experimental_cfg_mp4_requires_explicit_opt_in():
+    with pytest.raises(ValueError, match="experimental-cfg-video"):
+        validate_selective_cfg(
+            20, 30, 6.0, False, "sequential", guided_start=5
+        )
+
+
+def test_experimental_cfg_video_requires_mixed_window_and_steps():
+    with pytest.raises(ValueError, match="requires --cfg-guided-steps"):
+        validate_selective_cfg(
+            None, 30, 6.0, False, "sequential",
+            experimental_video=True,
+        )
+    with pytest.raises(ValueError, match="mixed"):
+        validate_selective_cfg(
+            30, 30, 6.0, False, "sequential",
+            experimental_video=True,
+        )
+    with pytest.raises(ValueError, match="mixed"):
+        validate_selective_cfg(
+            0, 30, 6.0, False, "sequential",
+            experimental_video=True,
+        )
+
+
+def test_experimental_cfg_video_rejects_conflicting_latent_mode():
+    with pytest.raises(ValueError, match="cannot use --latents-only"):
+        validate_selective_cfg(
+            20, 30, 6.0, True, "sequential",
+            guided_start=5, experimental_video=True,
+        )
+
+
+def test_selective_cfg_mp4_preview_forces_saved_latents(tmp_path):
+    from zigvideo.backends.cogvideox_fp16 import generation_preview
+
+    preview = generation_preview(
+        "ultra-safe", tmp_path / "models", tmp_path / "quality.mp4",
+        num_inference_steps=30, cfg_scale=6.0,
+        cfg_guided_steps=20, cfg_guided_start=5,
+        latents_only=False,
+        experimental_cfg_video=True,
+    )
+    assert preview["latents_only"] is False
+    assert preview["experimental_cfg_video"] is True
+    assert preview["output_mode"] == "experimental_cfg_mp4"
+    assert preview["save_latents"] is True
+    assert preview["cfg_step_batch_factors"] == [1] * 5 + [2] * 20 + [1] * 5
+
+
+def test_normal_cogvideo_generation_dry_run_is_unaffected(tmp_path):
+    from zigvideo.backends.cogvideox_fp16 import generation_preview
+
+    normal = generation_preview(
+        "ultra-safe", tmp_path / "models", tmp_path / "normal.mp4"
+    )
+    assert normal["output_mode"] == "mp4"
+    assert normal["save_latents"] is False
+    assert normal["cfg_guided_steps"] is None
+    assert normal["experimental_cfg_video"] is False
+    assert normal["native_generation"]["guidance_scale"] == 6.0
+
+
+def test_cli_experimental_cfg_video_dry_run(tmp_path, capsys):
+    import json
+
+    from zigvideo.cli import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args([
+        "generate", "--backend", "cogvideox",
+        "--prompt", "A small friendly robot walking through a rainy futuristic city",
+        "--output", str(tmp_path / "selective.mp4"),
+        "--steps", "30", "--cfg-scale", "6",
+        "--cfg-guided-start", "5", "--cfg-guided-steps", "20",
+        "--experimental-cfg-video", "--dry-run",
+    ])
+    assert args.func(args) == 0
+    payload = json.loads(capsys.readouterr().out.split("\n", 1)[1])
+    assert payload["output_mode"] == "experimental_cfg_mp4"
+    assert payload["save_latents"] is True
+    assert payload["cfg_step_batch_factors"] == [1] * 5 + [2] * 20 + [1] * 5
+
+
+def test_video_schedule_rejects_group_offload_even_with_explicit_flag():
+    with pytest.raises(ValueError, match="sequential"):
+        validate_selective_cfg(
+            20, 30, 6.0, False, "group",
+            guided_start=5, experimental_video=True,
+        )
