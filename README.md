@@ -623,3 +623,76 @@ or alternate backends / guided scheduling only if accompanied by a
 new falsifiable hypothesis and *real* quality validation. Do not run
 another 30-step job based solely on predicted speed, and do not
 present faster-but-unrecognizable clips as a product improvement.
+
+
+### Experimental: selective CFG steps (2026-10-10)
+
+**Hypothesis:** keep normal CFG=6 on the **first N diffusion steps**
+to preserve early prompt guidance, then run the conditional half of the
+transformer only for the remaining steps. This is an opt-in experimental
+cost optimization; **visual fidelity and runtime are not validated yet**.
+
+**Why a simple changing CFG value is insufficient:** pinned Diffusers
+0.40 computes `do_classifier_free_guidance` once, before the loop.
+Changing `_guidance_scale` through a step callback would still send a
+batch of 2 through the transformer on every step, so it would not
+save the expensive forward computation.
+
+The experimental `--cfg-guided-steps N` option uses temporary
+PyTorch module input/output hooks only for the transformer:
+- First N steps: unmodified CFG=6 conditional + unconditional batch.
+- Remaining steps: send *only* the positive/conditional half to the
+  real transformer. Duplicate that single prediction on return so
+  the upstream CFG combination mathematically becomes the same
+  conditional prediction as CFG=1.
+- The original scheduler and Diffusers pipeline loop remain unchanged.
+- Hooks are detached on successful return or failure.
+
+**Restrictions:** the new flag requires `--backend cogvideox`,
+`--offload sequential`, `--latents-only` and CFG strictly greater
+than 1. Normal video generation **cannot** enable it until tested.
+A single transformer call per denoising step and the upstream
+`return_dict=False` tuple output are expected; incompatible
+signatures fail explicitly. This is not a supported production preset.
+
+**First experiment:** one CFG=6 step followed by one conditional-only
+step, with no VAE or MP4. This tests actual GPU compatibility and
+whether the second step approaches the previously measured CFG=1
+steady time of **38.186 s**, rather than CFG=6's **75.293 s**.
+
+```powershell
+git pull
+.\.venv\Scripts\python.exe -m pytest -v
+
+# Check planned batch factors without loading the model
+.\.venv\Scripts\zigvideo.exe generate `
+  --backend cogvideox `
+  --prompt "A small friendly robot clearly visible in the center of the frame, full body, walking slowly through a rainy futuristic city street at night, detailed metallic body, neon reflections on wet pavement, cinematic lighting, realistic scene" `
+  --preset ultra-safe `
+  --aspect 9:16 `
+  --steps 2 `
+  --seed 42 `
+  --offload sequential `
+  --cfg-scale 6 `
+  --cfg-guided-steps 1 `
+  --latents-only `
+  --output outputs\cfg-selective-1of2.mp4 `
+  --dry-run
+```
+
+After tests and the dry run pass, remove **only** `--dry-run` for a
+small real-GPU smoke test. It creates
+`outputs/cfg-selective-1of2.latents.safetensors` and
+`outputs/cfg-selective-1of2.latents.safetensors.json`, not an MP4.
+The report's `cfg_schedule.actual_transformer_batch_factors`
+should read `[2, 1]`; check the **measured**
+`stage_timings.subsequent_step_mean_seconds` too.
+
+**Stop if:** incompatible hook signature, model output shape mismatch,
+GPU memory failure, step count mismatch or second step remains near
+CFG=6 timing. Passing the two-step smoke only establishes that the
+batch reduction works; it **does not** establish visual fidelity.
+Do not launch a 30-step selective-CFG quality job before this check.
+
+The previously validated baseline remains 30 steps, CFG=6,
+sequential offload; do not change the default automatically.
