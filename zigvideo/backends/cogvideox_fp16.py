@@ -215,14 +215,29 @@ def _cleanup_cuda(torch) -> None:
         torch.cuda.synchronize()
 
 
-def _center_crop_ratio(image: Image.Image, target_width: int, target_height: int) -> Image.Image:
+def validate_reframe_focus(aspect: str, focus_x: float = 0.5) -> None:
+    """Validate normalized horizontal portrait focus before decoding a VAE."""
+    if aspect not in SUPPORTED_ASPECTS:
+        raise ValueError(f"Unsupported aspect ratio: {aspect}")
+    if isinstance(focus_x, bool) or not isinstance(focus_x, (int, float)) or not 0 <= focus_x <= 1:
+        raise ValueError("--focus-x must be a finite number between 0 and 1.")
+    if aspect != "9:16" and focus_x != 0.5:
+        raise ValueError("--focus-x is only supported with --aspect 9:16.")
+
+
+def _center_crop_ratio(
+    image: Image.Image, target_width: int, target_height: int,
+    focus_x: float = 0.5,
+) -> Image.Image:
     src_w, src_h = image.size
     target_ratio = target_width / target_height
     src_ratio = src_w / src_h
 
     if src_ratio > target_ratio:
         crop_w = max(1, round(src_h * target_ratio))
-        left = max(0, (src_w - crop_w) // 2)
+        # Keep the requested subject in the crop, clamping at image edges.
+        # focus_x=0.5 exactly preserves the preexisting centered crop.
+        left = max(0, min(src_w - crop_w, round(src_w * focus_x - crop_w / 2)))
         box = (left, 0, left + crop_w, src_h)
     else:
         crop_h = max(1, round(src_w / target_ratio))
@@ -232,9 +247,10 @@ def _center_crop_ratio(image: Image.Image, target_width: int, target_height: int
     return image.crop(box)
 
 
-def reframe_frames(frames: list[Image.Image], aspect: str) -> list[Image.Image]:
-    if aspect not in SUPPORTED_ASPECTS:
-        raise ValueError(f"Unsupported aspect ratio: {aspect}")
+def reframe_frames(
+    frames: list[Image.Image], aspect: str, focus_x: float = 0.5,
+) -> list[Image.Image]:
+    validate_reframe_focus(aspect, focus_x)
 
     if aspect == "9:16":
         target = (360, 640)
@@ -243,7 +259,7 @@ def reframe_frames(frames: list[Image.Image], aspect: str) -> list[Image.Image]:
 
     reframed: list[Image.Image] = []
     for frame in frames:
-        cropped = _center_crop_ratio(frame, *target)
+        cropped = _center_crop_ratio(frame, *target, focus_x=focus_x)
         reframed.append(cropped.resize(target, Image.Resampling.LANCZOS))
     return reframed
 
