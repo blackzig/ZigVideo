@@ -145,3 +145,74 @@ def test_gpu_allocator_peak_flag_cpu_and_invalid_capacity():
     assert peak_allocation_exceeds_device_memory(3.8, None) is None
     with pytest.raises(ValueError, match="Invalid GPU"):
         peak_allocation_exceeds_device_memory(1.0, 0.0)
+
+
+def test_portrait_focus_default_reproduces_original_centered_crop():
+    from PIL import Image, ImageDraw
+    from zigvideo.backends.cogvideox_fp16 import reframe_frames
+
+    source = Image.new("RGB", (720, 480), color="black")
+    ImageDraw.Draw(source).rectangle((440, 20, 480, 440), fill="white")
+    default = reframe_frames([source], "9:16")[0]
+    explicit = reframe_frames([source], "9:16", focus_x=0.5)[0]
+    assert default.size == (360, 640)
+    assert default.tobytes() == explicit.tobytes()
+
+
+def test_portrait_focus_right_recovers_subject_outside_center_crop():
+    from PIL import Image, ImageDraw
+    from zigvideo.backends.cogvideox_fp16 import reframe_frames
+
+    source = Image.new("RGB", (720, 480), color="black")
+    # Subject at x=500 is outside the old native x=225..495 portrait crop.
+    ImageDraw.Draw(source).rectangle((500, 50, 530, 430), fill="red")
+    centered = reframe_frames([source], "9:16")[0]
+    shifted = reframe_frames([source], "9:16", focus_x=0.70)[0]
+    assert centered.size == shifted.size == (360, 640)
+    assert centered.getpixel((180, 320)) == (0, 0, 0)
+    shifted_pixel = shifted.getpixel((180, 320))
+    assert shifted_pixel[0] > 200
+    assert shifted_pixel[1] < 30
+    assert shifted_pixel[2] < 30
+
+
+@pytest.mark.parametrize("focus_x", [-0.1, 1.1, float("nan"), float("inf")])
+def test_portrait_focus_rejects_out_of_range_and_nonfinite(focus_x):
+    from zigvideo.backends.cogvideox_fp16 import validate_reframe_focus
+
+    with pytest.raises(ValueError, match="focus-x"):
+        validate_reframe_focus("9:16", focus_x)
+
+
+def test_portrait_focus_rejects_landscape_nondefault():
+    from zigvideo.backends.cogvideox_fp16 import validate_reframe_focus
+
+    with pytest.raises(ValueError, match="only supported"):
+        validate_reframe_focus("16:9", 0.70)
+    validate_reframe_focus("16:9", 0.5)
+
+
+def test_decode_focus_cli_dry_run(tmp_path, capsys):
+    import json
+    from zigvideo.cli import build_parser
+
+    source = tmp_path / "focus.safetensors"
+    save_file(
+        {"latents": torch.zeros((1, 4, 16, 60, 90), dtype=torch.float16)},
+        str(source),
+        metadata={"width": "720", "height": "480", "frames": "16"},
+    )
+    args = build_parser().parse_args(
+        [
+            "decode", "--latents", str(source),
+            "--output", str(tmp_path / "focus.mp4"),
+            "--aspect", "9:16", "--device", "cpu",
+            "--focus-x", "0.70", "--dry-run",
+        ]
+    )
+    assert args.func(args) == 0
+    preview = json.loads(capsys.readouterr().out)
+    assert preview["focus_x"] == 0.7
+    assert preview["aspect"] == "9:16"
+    assert preview["vae_precision"] == "float32"
+    assert preview["device"] == "cpu"
