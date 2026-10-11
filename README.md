@@ -1499,3 +1499,85 @@ and inspect detail *before* spending ~2 hours on another
 33-frame test. Text prompting is not a guarantee of outcome;
 future success criteria must include robot identity, facial
 detail and visible alternating footfalls independently.
+
+
+### New opt-in lighting-only composition experiment: `robot-walk-lit` (2026-10-10)
+
+The most recent 33-frame / 30-step full-CFG6 robot-walk video
+achieved **4.125 seconds of native motion**, but visual review
+found a **nearly black robot silhouette** with diminished metallic
+and facial detail. A simple gamma/brightness lift brightened the
+environment more than it restored the character. The previous
+16-frame robot-walk full-CFG6 video remains the most detailed
+appearance baseline, with body and face correctly centered.
+
+A new **separate opt-in** `--scene-profile robot-walk-lit` was
+added to `zigvideo.scene_profiles`; the existing `robot-walk`
+profile remains **byte-for-byte unchanged**. The new positive
+prompt inherits the original robot's full-body framing,
+alternating left/right steps, stationary camera, wet night
+street and neon background, and makes **only a lighting and
+metal-detail semantic change**: soft diffused frontal key light,
+visible silver metallic body panels, and illuminated blue LED
+eyes are requested early in the prompt (reducing potential
+end-of-prompt truncation), with balanced exposure and lit legs
+reiterated at the end. The negative prompt extends the
+original with bans on silhouette, blacked-out robot detail,
+unlit face and excessive backlighting. No changes to
+transformer weights or inference scheduling were made.
+
+The added CPU-only tests check that the original positive
+prompt can be reconstructed *exactly* from the lit version
+by reversing its two lighting edits; all previous movement
+and framing phrases remain untouched. They also check CLI
+opt-in behavior, incompatible options, no-LTX enforcement,
+effective dry-run prompts, CFG6/30-step/16-frame settings
+and safetensors metadata. **This profile has not been
+visually tested, and lighting is not guaranteed by text.**
+
+**No-GPU validation step (compare only 16 frames first):**
+
+```powershell
+git pull
+.\.venv\Scripts\python.exe -m pytest -v
+
+.\.venv\Scripts\zigvideo.exe generate `
+  --backend cogvideox `
+  --scene-profile robot-walk-lit `
+  --preset ultra-safe `
+  --frames 16 `
+  --aspect 9:16 `
+  --steps 30 `
+  --seed 42 `
+  --offload sequential `
+  --cfg-scale 6 `
+  --latents-only `
+  --output outputs\robot-walk-lit-16frames.mp4 `
+  --dry-run
+```
+
+The dry run should show `scene_profile="robot-walk-lit"`,
+early `diffused frontal key light` and `silver metallic body
+panels`, source `num_frames=16`, `num_inference_steps=30`,
+`guidance_scale=6.0`, 8 FPS / 2 seconds, no selective CFG,
+`latents_only=true`, and `save_latents=true`. The existing
+`robot-walk` profile remains available, as does normal
+`--prompt` usage.
+
+**Do not remove `--dry-run` automatically.** A later real
+16-frame/30-step CFG6 run would take approximately 40 minutes
+for diffusion **based on the earlier measured reference**;
+the separate CPU FP32 decoder previously took ~6 minutes.
+Timing and visual improvement are not guaranteed. If a real
+run is later authorized, generate **latents only** first,
+then decode with FP32 CPU, 9:16 and `focus_x=0.50`.
+Compare the new clip directly against the old
+`robot-fullbody-walk-fp32.mp4` on the same 16-frame duration
+and setting set: face/eye legibility, silver mechanical
+detail, no silhouette, feet visible, camera stability and
+walking motion. If lit 16 frames fail to improve appearance,
+**do not** spend another ~2 hours on lit 33 frames or
+jump to 49 frames.
+
+This is a prompt-control experiment, not a change to
+application defaults or an approval of selective CFG.
