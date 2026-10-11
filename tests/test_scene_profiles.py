@@ -136,3 +136,122 @@ def test_prompt_is_saved_with_latents_for_future_comparisons(tmp_path):
     assert metadata["scene_profile"] == "robot-walk"
     assert metadata["seed"] == "42"
     assert metadata["guidance_scale"] == "6.0"
+
+
+
+def test_robot_walk_lit_inherits_original_gait_and_only_reworks_lighting_tail():
+    from zigvideo.scene_profiles import SCENE_PROFILES
+
+    baseline = SCENE_PROFILES["robot-walk"]
+    lit = SCENE_PROFILES["robot-walk-lit"]
+    unchanged_prefix = baseline.prompt.split("clear silhouette.")[0]
+    assert baseline.prompt.endswith("cinematic but clearly lit.")
+    assert lit.prompt.startswith(unchanged_prefix)
+    assert "left foot visibly lifts" in lit.prompt
+    assert "right foot lifts" in lit.prompt
+    assert "stationary tripod camera" in lit.prompt
+    assert "the top of its head to both feet" in lit.prompt
+    assert "diffused frontal key light" in lit.prompt
+    assert "silver metallic body panels" in lit.prompt
+    assert "blue LED eyes" in lit.prompt
+    assert "dark street" in lit.prompt
+    assert lit.negative_prompt.startswith(baseline.negative_prompt)
+    assert "black silhouette" in lit.negative_prompt
+    assert "underexposed metallic features" in lit.negative_prompt
+    assert "16-frame CFG6" in lit.goal
+    assert baseline.negative_prompt != lit.negative_prompt
+
+
+def test_robot_walk_lit_dry_run_is_opt_in_and_isolates_lighting(tmp_path, capsys):
+    from zigvideo.cli import build_parser
+
+    parser = build_parser()
+    base_args = [
+        "generate", "--backend", "cogvideox", "--preset", "ultra-safe",
+        "--aspect", "9:16", "--frames", "16", "--steps", "30",
+        "--seed", "42", "--cfg-scale", "6", "--offload", "sequential",
+        "--latents-only", "--dry-run",
+    ]
+    original = parser.parse_args(
+        base_args + ["--scene-profile", "robot-walk",
+                     "--output", str(tmp_path / "original.mp4")]
+    )
+    lit = parser.parse_args(
+        base_args + ["--scene-profile", "robot-walk-lit",
+                     "--output", str(tmp_path / "lit.mp4")]
+    )
+    assert original.func(original) == 0
+    baseline_plan = json.loads(capsys.readouterr().out.split("\n", 1)[1])
+    assert lit.func(lit) == 0
+    lit_plan = json.loads(capsys.readouterr().out.split("\n", 1)[1])
+    assert lit_plan["scene_profile"] == "robot-walk-lit"
+    assert baseline_plan["scene_profile"] == "robot-walk"
+    assert lit_plan["native_generation"] == baseline_plan["native_generation"]
+    assert lit_plan["native_generation"]["num_frames"] == 16
+    assert lit_plan["native_generation"]["num_inference_steps"] == 30
+    assert lit_plan["native_generation"]["guidance_scale"] == 6.0
+    assert lit_plan["offload_strategy"] == baseline_plan["offload_strategy"] == "sequential"
+    assert lit_plan["cfg_step_batch_factors"] is None
+    assert lit_plan["experimental_cfg_video"] is False
+    assert lit_plan["latents_only"] is True
+    assert lit_plan["save_latents"] is True
+    assert lit_plan["source_duration_seconds"] == 2.0
+    assert "frontal key light" in lit_plan["prompt"]
+    assert "black silhouette" in lit_plan["negative_prompt"]
+    assert lit_plan["scene_quality_goal"]
+
+
+def test_robot_walk_lit_refuses_custom_prompt_conflict_before_gpu(tmp_path):
+    from zigvideo.cli import build_parser
+
+    args = build_parser().parse_args([
+        "generate", "--backend", "cogvideox",
+        "--scene-profile", "robot-walk-lit", "--prompt", "other scene",
+        "--output", str(tmp_path / "bad.mp4"), "--dry-run",
+    ])
+    with pytest.raises(ValueError, match="not both"):
+        args.func(args)
+
+
+def test_robot_walk_lit_is_not_accepted_by_ltx(tmp_path):
+    from zigvideo.cli import build_parser
+
+    args = build_parser().parse_args([
+        "generate", "--backend", "ltx",
+        "--scene-profile", "robot-walk-lit",
+        "--output", str(tmp_path / "bad.mp4"), "--dry-run",
+    ])
+    with pytest.raises(ValueError, match="require --backend cogvideox"):
+        args.func(args)
+
+
+def test_robot_walk_lit_saved_latents_record_exact_profile_text(tmp_path):
+    from zigvideo.backends.cogvideox_fp16 import CogVideoXAttempt, save_final_latents
+
+    chosen = resolve_generation_text(None, "robot-walk-lit")
+    saved = save_final_latents(
+        torch.zeros((1, 4, 16, 60, 90), dtype=torch.float16),
+        tmp_path / "robot-walk-lit.mp4",
+        CogVideoXAttempt(720, 480, 16, 8, 30, 6.0), seed=42,
+        prompt=chosen.prompt,
+        negative_prompt=chosen.negative_prompt,
+        scene_profile=chosen.scene_profile,
+    )
+    with safe_open(saved, framework="pt", device="cpu") as item:
+        metadata = item.metadata()
+    assert metadata["prompt"] == chosen.prompt
+    assert metadata["negative_prompt"] == chosen.negative_prompt
+    assert metadata["scene_profile"] == "robot-walk-lit"
+    assert metadata["frames"] == "16"
+    assert metadata["steps"] == "30"
+    assert metadata["guidance_scale"] == "6.0"
+
+
+def test_lit_profile_allows_explicit_negative_override_without_changing_lighting():
+    original = resolve_generation_text(None, "robot-walk-lit")
+    changed = resolve_generation_text(
+        None, "robot-walk-lit", negative_prompt="Exclude red neon"
+    )
+    assert changed.prompt == original.prompt
+    assert changed.negative_prompt == "Exclude red neon"
+    assert changed.scene_profile == "robot-walk-lit"
