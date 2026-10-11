@@ -241,7 +241,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="English generation prompt. Required unless --scene-profile is set.",
     )
     generate.add_argument(
-        "--scene-profile", choices=["robot-walk"], default=None,
+        "--scene-profile", choices=["robot-walk", "robot-walk-lit"], default=None,
         help=(
             "Opt-in reproducible CogVideoX composition/motion experiment. "
             "Use instead of --prompt; never alters the normal prompt path."
