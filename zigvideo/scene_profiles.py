@@ -60,25 +60,34 @@ SCENE_PROFILES: dict[str, SceneProfile] = {
 # variant changes the lighting direction and visibility instructions only,
 # so a 16-frame/CFG6 comparison isolates one semantic variable.
 _BASE_ROBOT_WALK = SCENE_PROFILES["robot-walk"]
+_ROBOT_WALK_SUBJECT_ANCHOR = (
+    "A single small friendly humanoid robot walks slowly toward the camera "
+)
+_ROBOT_WALK_LIT_SUBJECT = (
+    "A single small friendly humanoid robot under a diffused frontal key light, "
+    "with visibly illuminated silver metallic body panels and two blue LED eyes, "
+    "walks slowly toward the camera "
+)
 _ROBOT_WALK_LIGHTING_ANCHOR = (
     "clear silhouette. Wet pavement and soft neon lights in the distance, "
     "simple uncluttered background, cinematic but clearly lit."
 )
 _ROBOT_WALK_LIT_ENDING = (
     "clear full-body outline. Wet pavement and soft neon lights in the distance, "
-    "simple uncluttered background. Bright diffused frontal key light "
-    "illuminates the robot's head, face, torso, arms and both legs. "
-    "A gentle fill light keeps the silver metallic body panels visible "
-    "against the dark street; two small blue LED eyes and individual "
-    "facial components are clearly discernible. Balanced exposure "
-    "with readable metal textures, even when neon glows in the background."
+    "simple uncluttered background, balanced exposure with face, mechanical "
+    "details and both legs clearly lit."
 )
-if _BASE_ROBOT_WALK.prompt.count(_ROBOT_WALK_LIGHTING_ANCHOR) != 1:
-    raise RuntimeError("robot-walk lighting anchor changed; review lit-profile comparison")
+if (
+    _BASE_ROBOT_WALK.prompt.count(_ROBOT_WALK_SUBJECT_ANCHOR) != 1
+    or _BASE_ROBOT_WALK.prompt.count(_ROBOT_WALK_LIGHTING_ANCHOR) != 1
+):
+    raise RuntimeError("robot-walk anchors changed; review lit-profile comparison")
 
 SCENE_PROFILES["robot-walk-lit"] = SceneProfile(
-    prompt=_BASE_ROBOT_WALK.prompt.replace(
-        _ROBOT_WALK_LIGHTING_ANCHOR, _ROBOT_WALK_LIT_ENDING
+    prompt=(
+        _BASE_ROBOT_WALK.prompt
+        .replace(_ROBOT_WALK_SUBJECT_ANCHOR, _ROBOT_WALK_LIT_SUBJECT)
+        .replace(_ROBOT_WALK_LIGHTING_ANCHOR, _ROBOT_WALK_LIT_ENDING)
     ),
     negative_prompt=(
         _BASE_ROBOT_WALK.negative_prompt
