@@ -1581,3 +1581,55 @@ jump to 49 frames.
 
 This is a prompt-control experiment, not a change to
 application defaults or an approval of selective CFG.
+
+
+### Result: robot-walk-lit 16-frame/30-step full CFG6 latents (2026-10-10)
+
+The user ran the planned `--scene-profile robot-walk-lit` experiment
+on Windows with GTX 1660 SUPER 6 GB, preserving the established
+16-frame reference settings: CogVideoX-2B native FP16 transformer,
+720×480, 16 frames at 8 FPS, seed 42, full CFG=6, 30 steps,
+sequential CPU offload, `--latents-only`. Only the profile's
+lighting-focused positive and negative prompts were changed from
+`robot-walk`.
+
+- All **30/30 transformer steps completed**, with no reported OOM.
+- Checkpoints at steps **1, 16, and 30** sampled **0% nonfinite**
+  latents, shape **[1,4,16,60,90]**, final mean absolute latent
+  value **1.15937209**.
+- Model loading **111.20 s**; inference **2247.59 s**;
+  elapsed total **2359.20 s (39m19.20s)**.
+- Mean subsequent step time **73.335 s**; PyTorch CUDA peak
+  allocated **0.763 GiB** (not total device memory residency).
+- Final output is *only* the reusable latent tensor at
+  `outputs/robot-walk-lit-16frames.latents.safetensors`
+  and its report at
+  `outputs/robot-walk-lit-16frames.latents.safetensors.json`.
+  The report's quality field remains
+  `not_evaluated_latents_only`.
+
+**This does not yet demonstrate a visual lighting improvement.**
+Numerically finite latents are not decoded frames; the robot,
+face and lighting cannot be assessed until CPU FP32 VAE output is
+visually inspected. Keep the earlier CFG6 `robot-walk` 16-frame
+MP4 as the reference.
+
+The next step avoids rerunning diffusion and uses the
+previously successful CPU FP32 VAE path:
+
+```powershell
+.\.venv\Scripts\zigvideo.exe decode `
+  --latents outputs\robot-walk-lit-16frames.latents.safetensors `
+  --device cpu `
+  --aspect 9:16 `
+  --focus-x 0.50 `
+  --fps 8 `
+  --output outputs\robot-walk-lit-16frames-fp32.mp4
+```
+
+Compare the new 2-second MP4 against
+`outputs/robot-fullbody-walk-fp32.mp4` for head and facial
+details, blue eyes, illuminated metal body, framing and gait.
+Only after examining video and JSON numerical metrics can the
+lighting hypothesis be accepted or rejected. Do not expand to
+33 or 49 frames before that decision.
