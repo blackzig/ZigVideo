@@ -56,6 +56,47 @@ SCENE_PROFILES: dict[str, SceneProfile] = {
 }
 
 
+# Keep the original robot-walk profile byte-for-byte unchanged. This opt-in
+# variant changes the lighting direction and visibility instructions only,
+# so a 16-frame/CFG6 comparison isolates one semantic variable.
+_BASE_ROBOT_WALK = SCENE_PROFILES["robot-walk"]
+_ROBOT_WALK_LIGHTING_ANCHOR = (
+    "clear silhouette. Wet pavement and soft neon lights in the distance, "
+    "simple uncluttered background, cinematic but clearly lit."
+)
+_ROBOT_WALK_LIT_ENDING = (
+    "clear full-body outline. Wet pavement and soft neon lights in the distance, "
+    "simple uncluttered background. Bright diffused frontal key light "
+    "illuminates the robot's head, face, torso, arms and both legs. "
+    "A gentle fill light keeps the silver metallic body panels visible "
+    "against the dark street; two small blue LED eyes and individual "
+    "facial components are clearly discernible. Balanced exposure "
+    "with readable metal textures, even when neon glows in the background."
+)
+if _BASE_ROBOT_WALK.prompt.count(_ROBOT_WALK_LIGHTING_ANCHOR) != 1:
+    raise RuntimeError("robot-walk lighting anchor changed; review lit-profile comparison")
+
+SCENE_PROFILES["robot-walk-lit"] = SceneProfile(
+    prompt=_BASE_ROBOT_WALK.prompt.replace(
+        _ROBOT_WALK_LIGHTING_ANCHOR, _ROBOT_WALK_LIT_ENDING
+    ),
+    negative_prompt=(
+        _BASE_ROBOT_WALK.negative_prompt
+        + ", black silhouette, silhouetted subject, unlit face, "
+        "dark robot body, harsh backlighting, underexposed metallic features, "
+        "crushed shadows, blacked-out robot details"
+    ),
+    goal=(
+        "Preserve the original robot-walk full-body framing and alternating "
+        "footsteps while improving robot-face and silver-metal visibility. "
+        "Compare against the 16-frame CFG6 robot-walk video with matching "
+        "seed, steps, duration, VAE precision, and center crop. "
+        "A lighting prompt does not guarantee brighter video."
+    ),
+)
+
+
+
 @dataclass(frozen=True)
 class GenerationText:
     prompt: str
