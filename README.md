@@ -1419,3 +1419,83 @@ and arms, stability of camera and robot identity, background
 continuity, and absence of new malformed motion. A longer
 duration is not proof of an improved walking cycle. No changes
 to production defaults or generation settings have been made.
+
+
+### Final quality result: 33-frame full CFG6 FP32 video (2026-10-10)
+
+The user completed the 33-frame saved-latents VAE FP32 CPU decode
+after **126/126 local pytest tests passed (31.46 s)** and a successful
+decode dry run verifying saved shape **[1,9,16,60,90]**, metadata
+`frames=33`, seed 42, CFG 6, and `scene_profile=robot-walk`.
+The final files are:
+
+- `outputs/robot-walk-33frames-fp32.mp4`
+- `outputs/robot-walk-33frames-fp32.mp4.json`
+
+**Measured decode:** CogVideoX FP32 VAE on CPU, native decode
+`[1,3,33,480,720]`, output 360×640 (9:16 portrait,
+`focus_x=0.50`), **33 frames at 8 FPS = 4.125 s**.
+VAE decode **658.60 s**; total decode **662.64 s (11m02.64s)**.
+Previously established 33-frame denoising was **6493.03 s**,
+so combined diffusion + decode took **7155.67 s
+(1h59m15.67s)** across the separate operations.
+No transformer inference was repeated during CPU decoding.
+
+**Numerical checks:** raw FP32 VAE tensor sampled
+**0% nonfinite**, raw sample mean **-0.70037675**, sampled
+fraction **below -1 = 0.115066 (11.5066%)**.
+Output preflight: `status=plausible`, 0% sampled nonfinite,
+mean sampled pixel value **38.333/255**.
+For the prior 16-frame FP32 clip, raw sample fraction below -1
+was **0.012399 (1.2399%)**, while sample mean was ~-0.69675.
+These are *sampled tensor diagnostics*, not a measurement of
+the black subject's total pixel area or a causal proof of
+why the robot is a silhouette. Values outside the display
+range can be clipped by postprocessing.
+
+**Visual inspection of all 33 decoded MP4 frames**, compared
+against the 16-frame full-CFG6 robot-walk MP4:
+
+- A single full-body robot is consistently centered; head,
+  arms, legs and feet are generally within the portrait crop.
+  No nearby vehicle occludes it. The saturated blue wet
+  pavement remains consistent across the sequence.
+- Across 4.125 seconds there is clearly more ongoing movement
+  than in the original 2-second version, with visible alternating
+  leg positions and arm motion. The gait is **not fully natural**;
+  hand/arm pose looks exaggerated in some early frames, and
+  no objective guarantee of smooth foot contacts is available.
+- **Important quality regression:** the robot is now a
+  nearly black silhouette, with very little face or metallic
+  detail; the 16-frame version has much better mechanical
+  detail and a visibly illuminated head. More native frames
+  did not preserve the desired subject lighting and identity.
+- A *post-export diagnostic gamma lift* of frames 1, 9, 17,
+  25 and 33 brightened the paving substantially and exposed
+  only coarse arm/leg shapes, not the missing mechanical
+  textures/illuminated face. This does not prove the decoded
+  latent image has no hidden detail, but simple exposure
+  correction is not a satisfactory restoration.
+
+**Decision:** 33 native frames are technically feasible on
+this GTX 1660 SUPER 6 GB and do offer more time for motion,
+but the **visual result does not graduate as a new quality
+baseline**. Keep the more detailed 16-frame CFG6 robot-walk
+clip as the **appearance/reference image quality baseline**,
+and retain 33 frames as a separate **duration/movement**
+comparison. Do not switch generation defaults; do not
+automatically promote selective CFG; do not launch 49
+frames merely to gain duration.
+
+**Next quality experiment, only after a new plan and user
+approval:** retain the validated 16-frame / 30-step /
+full-CFG6 configuration and test one clearly delimited change
+to subject lighting/composition in the positive prompt
+(e.g. bright, front-lit robot with visible metallic facial
+details and blue accents, avoiding silhouette/backlighting).
+Prefer a new opt-in profile rather than overwriting the
+working `robot-walk` reference. Save latents, use VAE FP32 CPU,
+and inspect detail *before* spending ~2 hours on another
+33-frame test. Text prompting is not a guarantee of outcome;
+future success criteria must include robot identity, facial
+detail and visible alternating footfalls independently.
