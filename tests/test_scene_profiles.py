@@ -139,22 +139,34 @@ def test_prompt_is_saved_with_latents_for_future_comparisons(tmp_path):
 
 
 
-def test_robot_walk_lit_inherits_original_gait_and_only_reworks_lighting_tail():
-    from zigvideo.scene_profiles import SCENE_PROFILES
+def test_robot_walk_lit_inherits_original_gait_and_changes_only_lighting():
+    from zigvideo.scene_profiles import (
+        SCENE_PROFILES,
+        _ROBOT_WALK_SUBJECT_ANCHOR,
+        _ROBOT_WALK_LIT_SUBJECT,
+        _ROBOT_WALK_LIGHTING_ANCHOR,
+        _ROBOT_WALK_LIT_ENDING,
+    )
 
     baseline = SCENE_PROFILES["robot-walk"]
     lit = SCENE_PROFILES["robot-walk-lit"]
-    unchanged_prefix = baseline.prompt.split("clear silhouette.")[0]
+    # Reversing only two lighting edits must restore the FULL original prompt.
+    restored = (
+        lit.prompt
+        .replace(_ROBOT_WALK_LIT_SUBJECT, _ROBOT_WALK_SUBJECT_ANCHOR)
+        .replace(_ROBOT_WALK_LIT_ENDING, _ROBOT_WALK_LIGHTING_ANCHOR)
+    )
+    assert restored == baseline.prompt
     assert baseline.prompt.endswith("cinematic but clearly lit.")
-    assert lit.prompt.startswith(unchanged_prefix)
     assert "left foot visibly lifts" in lit.prompt
     assert "right foot lifts" in lit.prompt
     assert "stationary tripod camera" in lit.prompt
     assert "the top of its head to both feet" in lit.prompt
-    assert "diffused frontal key light" in lit.prompt
+    # Put the lighting instruction first to reduce T5 prompt-truncation risk.
+    assert "diffused frontal key light" in lit.prompt.split("walks slowly")[0]
     assert "silver metallic body panels" in lit.prompt
     assert "blue LED eyes" in lit.prompt
-    assert "dark street" in lit.prompt
+    assert "balanced exposure" in lit.prompt
     assert lit.negative_prompt.startswith(baseline.negative_prompt)
     assert "black silhouette" in lit.negative_prompt
     assert "underexposed metallic features" in lit.negative_prompt
