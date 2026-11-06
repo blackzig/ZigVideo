@@ -1693,3 +1693,73 @@ side with the original `robot-fullbody-walk-fp32.mp4`.
 Do not begin an expensive 33-frame lit experiment before
 that visual gate. The Hugging Face unauthenticated/deprecated
 symlink warnings were nonfatal in this completed decode.
+
+
+### Visual verdict — uploaded robot-walk-lit 16-frame FP32 MP4 (2026-11-06)
+
+The user uploaded the actual decoded
+`robot-walk-lit-16frames-fp32.mp4`. We extracted all **16 frames**
+at **360×640, 8 FPS, 2.0 seconds**, and compared corresponding
+frame indices (1, 4, 8, 12, 16, plus a nine-frame temporal strip)
+with the previously uploaded 16-frame reference
+`robot-fullbody-walk-fp32.mp4`, using the same displayed frame
+size and frame indices. This supersedes the earlier
+**PENDING VISUAL INSPECTION** note.
+
+**Visually confirmed wins:**
+- A single clearly recognizable silver humanoid robot with
+  strongly lit metallic face/helmet, torso, chest plating,
+  joints and legs. Blue illuminated facial elements and
+  glowing blue hands are clearly visible. Do not claim that
+  *two distinct* individual blue eyes are identifiable.
+- The black-silhouette issue seen in the 33-frame
+  `robot-walk` test is absent in the 16-frame lit clip.
+  The numeric image mean change from 38.779 to 53.301/255
+  is consistent with a brighter clip, but is **not itself
+  a subject-only illumination metric**, especially because
+  subject size changed.
+- One character remains visually consistent across the
+  16 frames; visible limb motion. No vehicles obstruct it.
+  The wet neon street background remains recognizable.
+
+**Quality regressions / limitations:**
+- **Framing/scale regressed materially.** The original
+  16-frame `robot-walk` depicts a smaller full-body
+  robot with substantial surrounding pavement and margins.
+  The lit profile generates a much larger, near-full-height
+  robot with feet touching or almost touching the **bottom
+  9:16 frame edge**, especially in the first frames.
+  This undermines the full-body portrait safe-zone goal
+  and leaves little room for a longer walk.
+- Motion remains somewhat mechanical/stiff. Alternating
+  leg placement and arm motion are present, but natural
+  heel-to-toe ground contacts and continuous physically
+  plausible gait have **not** been demonstrated in 2 seconds.
+- The prompt describes `two blue LED eyes`, but the
+  visual output supports **bright blue facial illumination**,
+  not a certain count of two distinct eye lights.
+- Neither the 16-frame reference nor `robot-walk-lit`
+  should be called a complete final-quality Short; the
+  reference is the framing baseline and the lit video
+  is now the **robot appearance/lighting baseline**.
+
+**Decision:** The lighting hypothesis **passed visually**,
+but the new profile **did not preserve the original wider
+framing**, despite unchanged framing text. This means
+the 16-frame lit video is a successful lighting experiment,
+not acceptance of the whole scene. Do **not** blindly
+promote it to 33 frames (~2 hours based on previous
+measurement) or try 49 frames.
+
+**Suggested next controlled experiment (not yet generated):**
+Create a *separate* opt-in `robot-walk-lit-wide` profile,
+preserving the successful frontal lighting and metallic
+detail instructions while more strongly requesting a
+wide fixed-camera view, a modest-sized robot, substantial
+visible pavement below both feet, and headroom. Test
+again at **16 frames / 30 steps / CFG6 / seed42 / sequential
+offload**, saving latents and decoding in CPU FP32 as before.
+Compare both **face detail** and **top/bottom margins**;
+only proceed to 33 frames if *both* criteria pass.
+Text-based framing is a hypothesis, not a guarantee.
+No such new 30-step GPU job has been authorized or started.
