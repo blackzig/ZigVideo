@@ -106,6 +106,62 @@ SCENE_PROFILES["robot-walk-lit"] = SceneProfile(
 
 
 
+
+# Framing-only experiment based on the already visually validated lit robot.
+# Keep both earlier scene profiles exactly as they are, so the comparison uses
+# the same character lighting, gait, seed, CFG, frame count and decoder settings.
+_BASE_ROBOT_WALK_LIT = SCENE_PROFILES["robot-walk-lit"]
+_ROBOT_WALK_LIT_OPENING = (
+    "A single small friendly humanoid robot under a diffused frontal key light, "
+    "with visibly illuminated silver metallic body panels and two blue LED eyes, "
+    "walks slowly toward the camera "
+)
+_ROBOT_WALK_LIT_WIDE_OPENING = (
+    "A wide static camera shot shows a single small friendly humanoid robot "
+    "under a diffused frontal key light, with visibly illuminated silver "
+    "metallic body panels and two blue LED eyes, walking slowly toward the camera "
+)
+_ROBOT_WALK_LIT_FRAMING = (
+    "Full-body wide shot: the complete robot is visible from the top of its "
+    "head to both feet at every moment, with clear space above the head "
+    "and below the feet. "
+)
+_ROBOT_WALK_LIT_WIDE_FRAMING = (
+    "Long shot from several meters away: the complete robot occupies about "
+    "half the picture height, fully visible from the top of its head to both "
+    "feet throughout, with generous headroom and an obvious strip of wet "
+    "pavement below the shoes. "
+)
+if (
+    _BASE_ROBOT_WALK_LIT.prompt.count(_ROBOT_WALK_LIT_OPENING) != 1
+    or _BASE_ROBOT_WALK_LIT.prompt.count(_ROBOT_WALK_LIT_FRAMING) != 1
+):
+    raise RuntimeError("robot-walk-lit anchors changed; review wide-profile comparison")
+
+SCENE_PROFILES["robot-walk-lit-wide"] = SceneProfile(
+    prompt=(
+        _BASE_ROBOT_WALK_LIT.prompt
+        .replace(_ROBOT_WALK_LIT_OPENING, _ROBOT_WALK_LIT_WIDE_OPENING)
+        .replace(_ROBOT_WALK_LIT_FRAMING, _ROBOT_WALK_LIT_WIDE_FRAMING)
+    ),
+    negative_prompt=(
+        _BASE_ROBOT_WALK_LIT.negative_prompt
+        + ", oversized robot, robot filling the image, medium shot, "
+        "tight framing, feet touching the bottom edge, missing headroom, "
+        "camera push-in, low-angle close-up"
+    ),
+    goal=(
+        "Keep the silver front-lit robot, visible face details and walking "
+        "instructions from robot-walk-lit, while restoring the smaller "
+        "full-body size, ample headroom and pavement below both feet seen "
+        "in the original robot-walk framing. Run 16 frames, 30 steps, CFG6, "
+        "seed 42; text prompting does not guarantee the requested scale. "
+        "Assess both brightness/detail and crop margins visually."
+    ),
+)
+
+
+
 @dataclass(frozen=True)
 class GenerationText:
     prompt: str
