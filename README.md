@@ -1854,3 +1854,36 @@ attempt 49 frames until a 16-frame lit-wide result passes
 both framing and appearance criteria. More frames may
 produce different composition; 16-frame success still
 doesn't guarantee 33-frame quality.
+
+
+### Local validation complete: robot-walk-lit-wide (2026-11-06)
+
+The user pulled commit `370e987` on Windows and completed
+the entire local pytest suite: **139 passed in 11.77 seconds**
+(no failures). All seven newly introduced `test_wide_scene_profile.py`
+tests passed.
+
+The user also ran the exact planned `robot-walk-lit-wide` CogVideoX
+`--dry-run`: **16 native frames, 8 FPS (2.0 seconds), 720×480,
+30 inference steps, full CFG6, seed 42, sequential CPU offload,
+latents-only and save-latents enabled**, no selective CFG. The
+preview contained explicit silver metallic panels, frontal
+key-light, 9:16 centered portrait-safe crop, robot at roughly
+half picture height, and wet pavement below both feet. It selected
+output `outputs/robot-walk-lit-wide-16frames.mp4` as the
+latents-only output stem.
+
+**Status:** the option and parameter plumbing are validated.
+The `dry-run` did *not* generate a video, check GPU consumption,
+or verify visual framing and illumination. A future real run
+must deliberately omit `--dry-run`, and will save
+`outputs/robot-walk-lit-wide-16frames.latents.safetensors` and
+its JSON; it **will not** produce MP4 until the separate CPU FP32
+VAE decode. The displayed `vae_precision=float16` in the
+generation preview is non-operative in `latents-only` mode;
+the separate decode remains float32 by design. The tested
+16-frame baseline suggests roughly 40 minutes GPU diffusion,
+plus roughly 6–7 minutes CPU FP32 decoding, without a guarantee.
+Do not repeat the 139 tests or one-step smoke check purely for
+routine; the remaining question is visually whether the
+robot can be both smaller and brightly detailed.
