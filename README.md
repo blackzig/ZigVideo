@@ -1633,3 +1633,63 @@ details, blue eyes, illuminated metal body, framing and gait.
 Only after examining video and JSON numerical metrics can the
 lighting hypothesis be accepted or rejected. Do not expand to
 33 or 49 frames before that decision.
+
+
+### robot-walk-lit 16-frame FP32 CPU decode: numerical result (2026-11-06)
+
+After the validated 16-frame/30-step/full-CFG6 latents-only
+`robot-walk-lit` generation, the user completed a **decode-only**
+CogVideoX FP32 VAE run on CPU, without repeating diffusion:
+
+```powershell
+.\.venv\Scripts\zigvideo.exe decode `
+  --latents outputs\robot-walk-lit-16frames.latents.safetensors `
+  --device cpu `
+  --aspect 9:16 `
+  --focus-x 0.50 `
+  --fps 8 `
+  --output outputs\robot-walk-lit-16frames-fp32.mp4
+```
+
+Confirmed outputs (user's terminal report):
+- `outputs/robot-walk-lit-16frames-fp32.mp4`
+- `outputs/robot-walk-lit-16frames-fp32.mp4.json`
+- **16 frames at 8 FPS**, 9:16 center crop, expected
+  360×640 portrait export, **2.0 seconds**.
+- Raw FP32 VAE shape `[1,3,16,480,720]`, sample count
+  **65,569**, **0.0% sampled nonfinite**, sample mean
+  **−0.5818799138**, sampled fraction below −1
+  **0.003447 (0.3447%)**.
+- Postprocessed numerical quality `plausible`,
+  **0.0% nonfinite** in the quality check,
+  mean pixel value **53.301/255**, maximum 255/255,
+  `near_black_pixel_fraction=0.0`.
+- VAE **391.11 s**; model load 3.43 s,
+  postprocess 0.90 s, export 3.01 s,
+  decode total **398.99 s (6m38.99s)**.
+  Combined with the prior `robot-walk-lit` latents-only
+  generation of 2359.20 s, this experiment took
+  **2758.19 s (45m58.19s)** across two completed runs.
+
+**Same-length 16-frame comparison with `robot-walk` (not lit):**
+Earlier FP32 VAE raw sampled mean was **−0.69675076**,
+fraction below −1 **0.012399 (1.2399%)**, and
+postprocessed average pixel value **38.779/255**.
+The lit variant's postprocessed image mean is
+**14.522/255 higher (~37.45%)**, while the below−1
+raw fraction fell to 0.3447%. These are whole-video
+numeric diagnostics, not per-subject brightness or texture
+measurements. They cannot demonstrate that the eyes,
+face, metal plates or footfalls actually improved.
+
+**Current quality verdict is PENDING VISUAL INSPECTION.**
+Only the terminal log and numeric report have been supplied
+for this run; **the newly decoded MP4 has not yet been
+uploaded or visually inspected**. Do not claim that the
+lit profile passes the appearance acceptance criteria yet.
+Request the actual `robot-walk-lit-16frames-fp32.mp4`
+(and optionally its JSON) and compare its frames side by
+side with the original `robot-fullbody-walk-fp32.mp4`.
+Do not begin an expensive 33-frame lit experiment before
+that visual gate. The Hugging Face unauthenticated/deprecated
+symlink warnings were nonfatal in this completed decode.
