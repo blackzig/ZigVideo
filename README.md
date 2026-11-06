@@ -1763,3 +1763,94 @@ Compare both **face detail** and **top/bottom margins**;
 only proceed to 33 frames if *both* criteria pass.
 Text-based framing is a hypothesis, not a guarantee.
 No such new 30-step GPU job has been authorized or started.
+
+
+### New opt-in `robot-walk-lit-wide` framing experiment (2026-11-06)
+
+After inspecting the uploaded 16-frame `robot-walk-lit` MP4,
+we confirmed the frontal key-light and metallic-face appearance
+improved, **but the robot grew to nearly full frame height** and
+the feet almost touched the bottom edge. This is a composition
+regression compared with the smaller, well-framed original
+`robot-walk`. The lit video is therefore the lighting baseline;
+the original remains the framing baseline.
+
+**A third opt-in `--scene-profile robot-walk-lit-wide` is now
+available.** No existing prompt, preset, model, CFG setting,
+frame default, offloading option, or VAE path changed.
+The new prompt is derived mechanically from the *already
+successful* `robot-walk-lit` prompt via exactly **two edits**:
+(1) the early subject phrase asks for a **wide static camera
+shot** instead of a general shot, retaining the front key-light,
+silver metallic panels, and two requested blue LED eyes;
+(2) the earlier `Full-body wide shot` phrase now explicitly
+requests the robot at **about half the image height**, viewed
+from several meters away, with generous headroom and a clear
+strip of wet pavement below the shoes.
+
+Everything else, including the alternating left/right
+footsteps, center-of-native-frame 9:16 safe-zone language,
+fixed tripod camera, and backlit neon wet street, stays as
+in `robot-walk-lit`. The negative prompt only *extends* the
+lit profile with exclusions for oversized subjects, tight
+framing, missing headroom, and feet on the bottom edge.
+A reversible textual test confirms that undoing the two
+framing changes reproduces the previous lit positive
+prompt exactly. This design **isolates the intended prompt
+variable, not the actual stochastic model response**.
+
+**Safety/acceptance gate:** first check 16 native frames,
+30 steps, full CFG6, seed 42, 8 FPS, sequential CPU offload,
+9:16 crop. Save final latents (no FP16 VAE); decode later
+in CPU FP32. Target **one silver, readable, front-lit robot
+occupying roughly half the portrait height, with both feet
+well above the frame bottom and headroom**, still showing
+alternating steps without subject/car obstructions.
+Do not accept better framing alone if facial/metallic detail
+collapses. Text prompting cannot guarantee either criterion.
+
+**Run the inexpensive validation first (no models loaded):**
+
+```powershell
+git pull
+.\.venv\Scripts\python.exe -m pytest -v
+
+.\.venv\Scripts\zigvideo.exe generate `
+  --backend cogvideox `
+  --scene-profile robot-walk-lit-wide `
+  --preset ultra-safe `
+  --frames 16 `
+  --aspect 9:16 `
+  --steps 30 `
+  --seed 42 `
+  --offload sequential `
+  --cfg-scale 6 `
+  --latents-only `
+  --output outputs\robot-walk-lit-wide-16frames.mp4 `
+  --dry-run
+```
+
+Expected: `scene_profile=robot-walk-lit-wide`,
+`native_generation={width:720,height:480,num_frames:16,
+fps:8,num_inference_steps:30,guidance_scale:6.0}`,
+`source_duration_seconds=2.0`, `latents_only=true`,
+`save_latents=true`, `cfg_guided_steps=null`,
+`cfg_schedule` absent/not enabled. This phase performs
+**zero diffusion/GPU work**.
+
+**Do not automatically remove `--dry-run`**. A full
+16-frame/30-step run of this third prompt would again
+consume roughly **40 minutes for latents plus 6–7 minutes
+for CPU FP32 VAE**, based on prior real runs, with no
+guarantee of quality. After successful local tests and
+preflight, a later full run is a separate deliberate
+decision, not part of implementation. Decode any saved
+latents with `zigvideo decode --device cpu --aspect 9:16
+--focus-x 0.50 --fps 8` to a *new* `...-fp32.mp4`
+filename. Keep both existing reference MP4s unchanged.
+
+Do **not** spend another ~2 hours on 33-frame output or
+attempt 49 frames until a 16-frame lit-wide result passes
+both framing and appearance criteria. More frames may
+produce different composition; 16-frame success still
+doesn't guarantee 33-frame quality.
