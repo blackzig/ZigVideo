@@ -1961,3 +1961,135 @@ prompt-dependent generation**. Avoid silently changing
 the profile used for this already saved experiment; preserve
 its exact text as provenance. Do not advance to 33 or 49
 frames before the decoded 16-frame result is visually reviewed.
+
+
+### Visual assessment of uploaded robot-walk-lit-wide FP32 MP4 (2026-11-07)
+
+The user completed the CPU FP32 VAE decode, uploaded the real
+`robot-walk-lit-wide-16frames-fp32.mp4`, and supplied its
+numerical report. We inspected every one of its 16 frames
+(360×640, 8 FPS, 2 seconds) beside the two previously decoded
+16-frame controls:
+`robot-fullbody-walk-fp32.mp4` (original `robot-walk`) and
+`robot-walk-lit-16frames-fp32.mp4` (lighting-only version).
+
+**Decode observations:**
+- Native FP32 VAE tensor `[1,3,16,480,720]`;
+  sampled nonfinite **0%**, sampled raw mean
+  **−0.6512075663**, sampled raw fraction below −1
+  **0.158551 (15.8551%)** (not a subject quality metric).
+- `quality.status=plausible` is numerical only;
+  sampled mean pixel value `44.686/255`. For comparison,
+  prior `robot-walk-lit` was `53.301/255` and
+  original `robot-walk` was `38.779/255`, but the
+  differing subject scales prevent these whole-video means
+  from being treated as subject-specific brightness scores.
+- VAE decode **363.06s**; total decode **367.09s
+  (6m07.09s)**, using CPU with `focus_x=0.50`.
+  Full prior generation **4751.44s**, combined run time
+  **5118.53s (~1h25m18.53s)**.
+
+**Visual verdict: silver robot preserved, wide shot NOT achieved.**
+All 16 frames consistently show one clear front-lit
+blue/silver metallic robot; face and mechanical details
+are visible, blue face lights present, no vehicle occlusion,
+subject stays near the center and feet are visible.
+Compared with the near-full-frame `robot-walk-lit`,
+`robot-walk-lit-wide` allows slightly more apparent room at
+some moments, but the subject still occupies **most of the
+portrait height**, with only a narrow margin under feet
+in several frames. It is not the requested roughly half-height
+long shot. The original `robot-walk` is still far smaller
+and has generous head and foot room. Gait has changing leg
+positions and arm movement, but still looks stiff; a
+well-resolved continuous footfall pattern is not confirmed.
+Thus neither the requested scale nor a high-quality walking
+cycle was established. The overall brightness is between the
+two earlier profiles, and the face and metal are legible.
+
+**Prompt provenance caveat:** this is the run where positive
+prompt was **241 tokens vs model limit 226**, truncating the
+last phrase about balanced exposure. The early wide-shot
+and frontal-light requests were before the cut, but cannot
+be presumed to have guaranteed composition. The exact
+original text remains unchanged in the profile and reports
+for reproducibility. Do not overinterpret the 15.8551%
+raw-VAE-below−1 sample fraction as the cause of zoom or
+cropping.
+
+**Decision:** preserve the original 16-frame clip as
+framing baseline and `robot-walk-lit` as best bright-robot
+appearance baseline. The 16-frame lit-wide clip is a
+useful comparison but **fails the target 50%-frame-height
+framing gate**. Do not spend another ~2 hours on 33 frames
+with this profile or jump to 49. Correct the prompt
+token-limit workflow and simplify prompts before any
+further expensive generation.
+
+### CogVideoX exact 226-token T5 preflight (2026-11-07)
+
+Added `zigvideo/prompt_preflight.py` to guard against the
+actual 226-token text encoder cutoff in the upstream
+CogVideoX Diffusers pipeline. It uses the **locally cached
+THUDM/CogVideoX-2b T5Tokenizer** with
+`add_special_tokens=True, truncation=False, padding=False`.
+Both the positive and negative prompts must fit. It counts
+model tokens, **not English words or characters**; it
+rejects 227+ tokens with an actionable error before loading
+the video pipeline. This also prevents a silent mismatch
+between the full prompt recorded in latent metadata and
+the truncated text actually provided to the model.
+
+**Real CogVideoX `generate` commands now enforce this
+check automatically before loading the transformer/VAE
+weights.** `generate --dry-run` continues to work without
+the tokenizer or any model components for backward
+compatibility. Add `--validate-prompt-tokens` to a
+CogVideoX dry-run to opt in to the exact offline check.
+This fetches **no model weights and makes no internet
+requests**; it requires the tokenizer to already exist in
+`--cache-dir`. If the tokenizer isn't in the specified cache,
+the checked dry-run / real generation fails closed with
+an error explaining the missing tokenizer. This is
+intentional to avoid a costly truncated generation.
+
+To inspect the existing *already tested* (truncated)
+wide profile, use **only the checked dry run**:
+
+```powershell
+git pull
+.\.venv\Scripts\python.exe -m pytest -v
+
+.\.venv\Scripts\zigvideo.exe generate `
+  --backend cogvideox `
+  --scene-profile robot-walk-lit-wide `
+  --preset ultra-safe `
+  --frames 16 `
+  --aspect 9:16 `
+  --steps 30 `
+  --seed 42 `
+  --offload sequential `
+  --cfg-scale 6 `
+  --latents-only `
+  --output outputs\robot-walk-lit-wide-token-check.mp4 `
+  --validate-prompt-tokens `
+  --dry-run
+```
+
+**Expected for this old wide prompt: fail before any model
+load with a positive prompt length beyond 226**. The
+previous actual 30-step run warned `241 > 226`; the
+checked tokenizer should reproduce that length if the
+same cached tokenizer revision is used. A failing
+checked dry run is the *desired safety result* for this
+historically oversized prompt. The already generated
+latents and MP4 remain valid and untouched.
+
+Tests are CPU-only and use fake tokenizers to exercise
+boundary (226 vs 227), negative prompt truncation,
+missing-cache fail-closed behavior, zero-GPU checked
+dry run, legacy dry-run compatibility and prevention
+of weight loading on too-long real prompts. No tokenizer
+downloads or GPU work is performed by the tests.
+Do not claim that a new compact prompt fits until
+it passes the real tokenizer checked dry run.
