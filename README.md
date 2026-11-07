@@ -1887,3 +1887,77 @@ plus roughly 6–7 minutes CPU FP32 decoding, without a guarantee.
 Do not repeat the 139 tests or one-step smoke check purely for
 routine; the remaining question is visually whether the
 robot can be both smaller and brightly detailed.
+
+
+### Full robot-walk-lit-wide 16-frame generation: measured result (2026-11-06)
+
+The user completed the planned full 30-step generation on Windows
+GTX 1660 SUPER 6GB using `--scene-profile robot-walk-lit-wide`,
+CogVideoX-2B native FP16 transformer, 720×480, 16 frames at 8 FPS,
+full CFG6, seed 42, sequential CPU offload and `--latents-only`.
+
+**Numerical/runtime result:**
+- All **30/30** diffusion steps completed without a reported OOM.
+  Latent checkpoints **1, 16, 30** each sampled **0% nonfinite**;
+  final shape **[1,4,16,60,90]**.
+- Output:
+  `outputs/robot-walk-lit-wide-16frames.latents.safetensors`
+  and `outputs/robot-walk-lit-wide-16frames.latents.safetensors.json`.
+  **No MP4 was generated; VAE not run.**
+- Model load **115.19s**, diffusion **4635.46s**, total
+  **4751.44s (1h19m11.44s)**; later-step mean
+  **148.917s**; PyTorch peak CUDA allocated **0.763 GiB**
+  (not total device residency).
+- Previous otherwise-matching `robot-walk-lit` 16-frame
+  full CFG6 run took **2359.20s (39m19.20s)**, including
+  **2247.59s** inference and **73.335s** mean later-step.
+  The wide run was ~**2.01× slower overall**.
+  Large variations in individual step durations
+  (including several >300s) mean the source of the
+  slowdown **cannot be concluded from these logs alone**.
+
+**Important discovered prompt-limit issue:**
+During actual generation, transformers warned:
+`Token indices sequence length is longer than the specified
+maximum sequence length for this model (241 > 226)`, and
+diffusers confirmed that the final prompt suffix was truncated:
+`background, balanced exposure with face, mechanical details
+and both legs clearly lit.`.
+The saved prompt string in the JSON is the original *requested*
+full string, **not proof that the text encoder processed all
+its tokens**. The early positive instructions for distant
+wide framing, robot size, pavement below feet, frontal light,
+silver panels and blue LED eyes appear *before* the truncated
+tail. So this completed experiment still tests those early
+instructions, but **must be labeled as a partially truncated
+prompt**, and should not be claimed to validate balanced
+exposure wording that was dropped. The 0% nonfinite latent
+check does not say anything about visual fidelity.
+
+**Next action (no repeat diffusion):**
+
+```powershell
+.\.venv\Scripts\zigvideo.exe decode `
+  --latents outputs\robot-walk-lit-wide-16frames.latents.safetensors `
+  --device cpu `
+  --aspect 9:16 `
+  --focus-x 0.50 `
+  --fps 8 `
+  --output outputs\robot-walk-lit-wide-16frames-fp32.mp4
+```
+
+The previous 16-frame CPU FP32 VAE took about 6–7 minutes,
+but actual runtime may vary. Examine the resulting MP4 and
+numeric JSON against both the original `robot-walk` (small,
+well-framed robot) and `robot-walk-lit` (bright metal face,
+near-edge feet). Evaluate size, headroom, pavement below feet,
+face/body visibility and foot placement across all 16 frames.
+
+**Future fix, not a reason to discard these saved latents:**
+introduce tokenizer-aware preflight visibility or shorten
+the wide profile under the real model's 226-token budget,
+with regression tests, **before any further expensive
+prompt-dependent generation**. Avoid silently changing
+the profile used for this already saved experiment; preserve
+its exact text as provenance. Do not advance to 33 or 49
+frames before the decoded 16-frame result is visually reviewed.
