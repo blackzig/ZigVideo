@@ -110,22 +110,27 @@ def cmd_generate(args: argparse.Namespace) -> int:
         else {}
     )
 
+    if args.validate_prompt_tokens and backend != "cogvideox":
+        raise ValueError("--validate-prompt-tokens requires the CogVideoX backend.")
+
     if args.dry_run:
-        print(
-            json.dumps(
-                generation_preview(
-                    args.preset,
-                    args.cache_dir,
-                    args.output,
-                    aspect=args.aspect,
-                    num_inference_steps=args.steps,
-                    **({"prompt": scene_text.prompt} if backend == "cogvideox" else {}),
-                    **backend_kwargs,
-                ),
-                indent=2,
-                ensure_ascii=False,
-            )
+        preview = generation_preview(
+            args.preset,
+            args.cache_dir,
+            args.output,
+            aspect=args.aspect,
+            num_inference_steps=args.steps,
+            **({"prompt": scene_text.prompt} if backend == "cogvideox" else {}),
+            **backend_kwargs,
         )
+        if args.validate_prompt_tokens:
+            from .prompt_preflight import validate_cogvideox_prompt_tokens
+
+            preview["prompt_token_preflight"] = validate_cogvideox_prompt_tokens(
+                scene_text.prompt, scene_text.negative_prompt,
+                cache_dir=args.cache_dir,
+            )
+        print(json.dumps(preview, indent=2, ensure_ascii=False))
         return 0
 
     report = generate_text_to_video(
@@ -356,6 +361,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--cache-dir",
         default="models/huggingface",
         help="Local Hugging Face cache directory.",
+    )
+    generate.add_argument(
+        "--validate-prompt-tokens",
+        action="store_true",
+        help=(
+            "For CogVideoX dry-run, count text using its locally cached T5 tokenizer "
+            "and reject prompts beyond 226 tokens. Real CogVideoX generation "
+            "always performs this validation before loading weights."
+        ),
     )
     generate.add_argument(
         "--dry-run",
