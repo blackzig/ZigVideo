@@ -10,6 +10,7 @@ import time
 from PIL import Image
 
 from ..benchmark import summarize_stage_timings
+from ..prompt_preflight import validate_cogvideox_prompt_tokens
 from ..scene_profiles import DEFAULT_NEGATIVE_PROMPT, SCENE_PROFILES
 from ..selective_cfg import (
     cfg_step_batch_factors,
@@ -514,6 +515,18 @@ def generate_text_to_video(
     )
     if latents_only or experimental_cfg_video:
         save_latents = True
+
+    # The upstream T5 text encoder silently truncates after 226 tokens.
+    # Validate both prompts with the local tokenizer BEFORE GPU model load.
+    prompt_check = validate_cogvideox_prompt_tokens(
+        prompt, negative_prompt, cache_dir=cache_dir
+    )
+    print(
+        "[ZigVideo] T5 prompt preflight: "
+        f"positive={prompt_check['prompt_tokens']}/226, "
+        f"negative={prompt_check['negative_prompt_tokens']}/226, "
+        "no truncation."
+    )
 
     total_started = time.perf_counter()
     load_started = time.perf_counter()
